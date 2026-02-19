@@ -24,6 +24,7 @@ private:
         const sf::Vector2f& to
     );
     void drawSmoothSegment(Canvas& canvas);
+    void drawStrokeSegment(Canvas& canvas);
 
 private:
     // Stroke data (important for future Undo / AI)

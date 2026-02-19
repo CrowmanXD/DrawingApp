@@ -37,6 +37,17 @@ void Application::processEvents() {
             m_window.close();
             m_running = false;
         }
+
+        // Handle keyboard shortcuts for undo/redo
+        if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
+            if (key->code == sf::Keyboard::Key::Z) {
+                m_canvas.undo();
+            }
+            else if (key->code == sf::Keyboard::Key::Y) {
+                m_canvas.redo();
+            }
+        }
+
         if (!m_imgui.wantsCaptureMouse()) {
             if (const auto* mouse = event->getIf<sf::Event::MouseButtonPressed>()) {
                 if (mouse->button == sf::Mouse::Button::Left) {

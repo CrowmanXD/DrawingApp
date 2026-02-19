@@ -3,12 +3,9 @@
 #include <SFML/Graphics.hpp>
 #include <SFML/Graphics/RenderTarget.hpp>
 #include <SFML/System/Vector2.hpp>
-#include <unordered_set>
-#include <vector>
+#include <memory>
 
-#include "Tile.h"
 #include "UndoStack.h"
-#include "TileGrid.h"
 
 class Canvas {
 public:
@@ -19,6 +16,9 @@ public:
     void beginStroke();
     void endStroke();
 
+    void undo();
+    void redo();
+
     sf::RenderTexture& getTexture();            // pentru desen
     const sf::Texture& getFinalTexture() const; // pentru afisare
 
@@ -26,7 +26,8 @@ public:
 
 private:
     sf::RenderTexture m_texture;
+    UndoStack m_undoStack;
 
-    std::vector<Tile> m_tilesBefore;
-    std::vector<Tile> m_tilesAfter;
+    bool m_inStroke = false;
+    sf::Image m_strokeBackup;
 };

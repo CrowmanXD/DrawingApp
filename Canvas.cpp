@@ -1,4 +1,5 @@
 #include "Canvas.h"
+#include "StrokeUndoCommand.h"
 
 Canvas::Canvas(sf::Vector2u size) {
     m_texture.resize(size);
@@ -7,18 +8,40 @@ Canvas::Canvas(sf::Vector2u size) {
 }
 
 void Canvas::beginStroke() {
-    m_tilesBefore.clear();
-    // mai târziu: capture tile-uri
+    m_inStroke = true;
+    // Capture the canvas state before drawing
+    m_strokeBackup = m_texture.getTexture().copyToImage();
 }
 
 void Canvas::endStroke() {
-    m_tilesAfter.clear();
-    // mai târziu: push UndoCommand
+    if (!m_inStroke)
+        return;
+
+    m_inStroke = false;
+
+    // Capture the canvas state after drawing
+    auto beforeImage = std::make_unique<sf::Image>(m_strokeBackup);
+    auto afterImage = std::make_unique<sf::Image>(m_texture.getTexture().copyToImage());
+
+    // Create and push undo command
+    auto cmd = std::make_unique<StrokeUndoCommand>(
+        std::move(beforeImage),
+        std::move(afterImage)
+    );
+    m_undoStack.push(std::move(cmd));
 }
 
-void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f) {
+void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
     m_texture.draw(drawable);
     m_texture.display();
+}
+
+void Canvas::undo() {
+    m_undoStack.undo(*this);
+}
+
+void Canvas::redo() {
+    m_undoStack.redo(*this);
 }
 
 sf::RenderTexture& Canvas::getTexture() {

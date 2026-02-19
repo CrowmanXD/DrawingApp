@@ -1,6 +1,7 @@
 #pragma once
 #include "UndoCommand.h"
-#include <stack>
+#include <vector>
+#include <memory>
 
 class UndoCommand;
 class Canvas;
