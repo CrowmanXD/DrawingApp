@@ -11,21 +11,23 @@ StrokeUndoCommand::StrokeUndoCommand(
 void StrokeUndoCommand::undo(Canvas& canvas) {
     if (m_before) {
         sf::Texture texture;
-        texture.loadFromImage(*m_before);
-        sf::Sprite sprite(texture);
-        canvas.getTexture().clear(sf::Color::White);
-        canvas.getTexture().draw(sprite);
-        canvas.getTexture().display();
+        if (texture.loadFromImage(*m_before)) {
+            sf::Sprite sprite(texture);
+            canvas.getTexture().clear(sf::Color::White);
+            canvas.getTexture().draw(sprite);
+            canvas.getTexture().display();
+        }
     }
 }
 
 void StrokeUndoCommand::redo(Canvas& canvas) {
     if (m_after) {
         sf::Texture texture;
-        texture.loadFromImage(*m_after);
-        sf::Sprite sprite(texture);
-        canvas.getTexture().clear(sf::Color::White);
-        canvas.getTexture().draw(sprite);
-        canvas.getTexture().display();
+        if (texture.loadFromImage(*m_after)) {
+            sf::Sprite sprite(texture);
+            canvas.getTexture().clear(sf::Color::White);
+            canvas.getTexture().draw(sprite);
+            canvas.getTexture().display();
+        }
     }
 }

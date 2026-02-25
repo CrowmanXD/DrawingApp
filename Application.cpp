@@ -73,7 +73,7 @@ void Application::processEvents() {
 }
 
 void Application::update(sf::Time deltaTime) {
-    m_imgui.update(m_window, deltaTime);
+    m_imgui.update(m_window, deltaTime, *this);
 }
 
 void Application::render() {
@@ -84,4 +84,52 @@ void Application::render() {
 
     m_imgui.render(m_window);
     m_window.display();
+}
+
+sf::Color Application::getBrushColor() const {
+    return m_activeTool->getColor();
+}
+
+void Application::setBrushColor(const sf::Color& color) {
+    m_activeTool->setColor(color);
+}
+
+float Application::getBrushSize() const {
+    return m_activeTool->getSize();
+}
+
+void Application::setBrushSize(float size) {
+    m_activeTool->setSize(size);
+}
+
+float Application::getBrushSmoothing() const {
+    return m_activeTool->getSmoothing();
+}
+
+void Application::setBrushSmoothing(float smoothing) {
+    m_activeTool->setSmoothing(smoothing);
+}
+
+float Application::getBrushJitter() const {
+    return m_activeTool->getJitter();
+}
+
+void Application::setBrushJitter(float jitter) {
+    m_activeTool->setJitter(jitter);
+}
+
+float Application::getBrushFlow() const {
+    return m_activeTool->getFlow();
+}
+
+void Application::setBrushFlow(float flow) {
+    m_activeTool->setFlow(flow);
+}
+
+float Application::getBrushSoftness() const {
+    return m_activeTool->getSoftness();
+}
+
+void Application::setBrushSoftness(float softness) {
+    m_activeTool->setSoftness(softness);
 }

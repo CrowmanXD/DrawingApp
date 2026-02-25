@@ -3,7 +3,8 @@
 
 Canvas::Canvas(sf::Vector2u size) {
     m_texture.resize(size);
-    m_texture.clear(sf::Color::White);
+    // Use transparent background to support alpha blending
+    m_texture.clear(sf::Color(255, 255, 255, 255));
     m_texture.display();
 }
 
@@ -32,15 +33,52 @@ void Canvas::endStroke() {
 }
 
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
-    m_texture.draw(drawable);
+    // Only draw if a stroke is currently active
+    if (!m_inStroke)
+        return;
+
+    // Ensure alpha blending is enabled
+    m_texture.draw(drawable, sf::RenderStates(sf::BlendAlpha));
+    m_texture.display();
+}
+
+void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states) {
+    // Only draw if a stroke is currently active
+    if (!m_inStroke)
+        return;
+
+    // Use provided blend states
+    m_texture.draw(drawable, states);
     m_texture.display();
 }
 
 void Canvas::undo() {
+    // Cancel current stroke if one is in progress
+    if (m_inStroke) {
+        m_inStroke = false;
+        // Restore the canvas to the state before the current stroke
+        sf::Texture texture;
+        if (texture.loadFromImage(m_strokeBackup)) {
+            m_texture.clear(sf::Color::White);
+            m_texture.draw(sf::Sprite(texture));
+            m_texture.display();
+        }
+    }
     m_undoStack.undo(*this);
 }
 
 void Canvas::redo() {
+    // Cancel current stroke if one is in progress
+    if (m_inStroke) {
+        m_inStroke = false;
+        // Restore the canvas to the state before the current stroke
+        sf::Texture texture;
+        if (texture.loadFromImage(m_strokeBackup)) {
+            m_texture.clear(sf::Color::White);
+            m_texture.draw(sf::Sprite(texture));
+            m_texture.display();
+        }
+    }
     m_undoStack.redo(*this);
 }
 

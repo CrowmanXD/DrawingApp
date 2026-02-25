@@ -12,6 +12,7 @@ public:
     explicit Canvas(sf::Vector2u size);
 
     void draw(const sf::Drawable& drawable, sf::Vector2f position);
+    void draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states);
 
     void beginStroke();
     void endStroke();
@@ -19,8 +20,8 @@ public:
     void undo();
     void redo();
 
-    sf::RenderTexture& getTexture();            // pentru desen
-    const sf::Texture& getFinalTexture() const; // pentru afisare
+    sf::RenderTexture& getTexture();
+    const sf::Texture& getFinalTexture() const;
 
     void clear(const sf::Color& color = sf::Color::White);
 

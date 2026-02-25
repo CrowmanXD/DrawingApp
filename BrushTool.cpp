@@ -1,189 +1,179 @@
 #include "BrushTool.h"
 #include "Canvas.h"
 
+#include <SFML/Graphics/Sprite.hpp>
+#include <SFML/Graphics/RenderTexture.hpp>
 #include <SFML/Graphics/CircleShape.hpp>
 #include <cmath>
 
-namespace {
-    sf::Vector2f bezier(
-        const sf::Vector2f& p0,
-        const sf::Vector2f& p1,
-        const sf::Vector2f& p2,
-        float t
-    ) {
-        float u = 1.f - t;
-        return (u * u) * p0 + (2.f * u * t) * p1 + (t * t) * p2;
-    }
-
-    // Catmull-Rom interpolation for smoother curves
-    sf::Vector2f catmullRom(
-        const sf::Vector2f& p0,
-        const sf::Vector2f& p1,
-        const sf::Vector2f& p2,
-        const sf::Vector2f& p3,
-        float t
-    ) {
-        float t2 = t * t;
-        float t3 = t2 * t;
-
-        float v0 = (p2.x - p0.x) * 0.5f;
-        float v1 = (p3.x - p1.x) * 0.5f;
-        float x = p1.x + v0 * t + (3.f * (p2.x - p1.x) - 2.f * v0 - v1) * t2 + (2.f * (p1.x - p2.x) + v0 + v1) * t3;
-
-        v0 = (p2.y - p0.y) * 0.5f;
-        v1 = (p3.y - p1.y) * 0.5f;
-        float y = p1.y + v0 * t + (3.f * (p2.y - p1.y) - 2.f * v0 - v1) * t2 + (2.f * (p1.y - p2.y) + v0 + v1) * t3;
-
-        return { x, y };
-    }
-
-    float distance(const sf::Vector2f& a, const sf::Vector2f& b) {
-        float dx = b.x - a.x;
-        float dy = b.y - a.y;
-        return std::sqrt(dx * dx + dy * dy);
-    }
-}
-
 BrushTool::BrushTool()
     : m_color(sf::Color::Black),
-    m_size(5.f) {
+    m_size(5.f),
+    m_softness(12.0f),  // VERY soft - almost Gaussian
+    m_isDrawing(false) {
+
+    // Initialize brush engine components
+    m_stabilizer = std::make_unique<PathStabilizer>(0.5f);
+    m_dabScheduler = std::make_unique<DabScheduler>(0.5f);
+    m_dynamics = std::make_unique<BrushDynamics>();
+    m_compositor = std::make_unique<DabCompositor>();
+
+    // Much higher jitter to break spacing regularity
+    m_dabScheduler->setJitter(2.0f);
+
+    // Configure dynamics with default influences
+    m_dynamics->setBaseSize(1.0f);
+    m_dynamics->setBaseOpacity(1.0f);
+    m_dynamics->setBaseFlow(1.0f);
+
+    // Add pressure influence to size (pressure increases brush size)
+    m_dynamics->addSizeInfluence(std::make_shared<PressureInfluence>());
+
+    // Add speed influence to opacity (slow strokes are more opaque)
+    auto speedInfluence = std::make_shared<SpeedInfluence>();
+    speedInfluence->strength = 0.3f;  // Moderate influence
+    m_dynamics->addOpacityInfluence(speedInfluence);
+
+    // Higher flow for better coverage with soft brush
+    m_dynamics->setBaseFlow(0.45f);
+
+    createBrushTexture();
 }
 
 void BrushTool::setColor(const sf::Color& color) {
     m_color = color;
 }
 
+sf::Color BrushTool::getColor() const {
+    return m_color;
+}
+
 void BrushTool::setSize(float size) {
     m_size = size;
+    // Set dab spacing to 2% of brush size for ULTRA dense coverage
+    // This ensures dabs overlap so much that individual stamps disappear
+    m_dabScheduler->setMinDistance(std::max(0.1f, size * 0.02f));
+}
+
+float BrushTool::getSize() const {
+    return m_size;
+}
+
+void BrushTool::setSmoothing(float smoothing) {
+    m_stabilizer->setStabilization(smoothing);
+}
+
+float BrushTool::getSmoothing() const {
+    return m_stabilizer->getStabilization();
+}
+
+void BrushTool::setJitter(float jitter) {
+    m_dabScheduler->setJitter(jitter);
+}
+
+float BrushTool::getJitter() const {
+    return m_dabScheduler->getJitter();
+}
+
+void BrushTool::setFlow(float flow) {
+    m_dynamics->setBaseFlow(flow);
+}
+
+float BrushTool::getFlow() const {
+    return m_dynamics->getBaseFlow();
+}
+
+void BrushTool::setSoftness(float softness) {
+    m_softness = softness;
+    // Regenerate brush texture with new softness
+    createBrushTexture();
+}
+
+float BrushTool::getSoftness() const {
+    return m_softness;
 }
 
 void BrushTool::onMouseDown(Canvas& canvas, sf::Vector2f position) {
-    m_points.clear();
-    m_points.push_back(position);
+    m_isDrawing = true;
+    m_lastPoint = StrokePoint(position, 1.0f);
 
-    drawDot(canvas, position);
+    m_stabilizer->reset();
+    m_dabScheduler->reset();
 }
 
 void BrushTool::onMouseMove(Canvas& canvas, sf::Vector2f position) {
-    if (m_points.empty())
+    if (!m_isDrawing)
         return;
 
-    sf::Vector2f lastPoint = m_points.back();
-    float dist = distance(lastPoint, position);
-
-    // Professional apps: interpolate intermediate points based on distance
-    // This ensures no gaps regardless of cursor speed
-    const float MAX_SEGMENT_DISTANCE = m_size * 1.5f; // Adjust based on brush size
-
-    if (dist > MAX_SEGMENT_DISTANCE) {
-        // Insert intermediate points
-        int numInterpolated = static_cast<int>(dist / MAX_SEGMENT_DISTANCE);
-        for (int i = 1; i <= numInterpolated; ++i) {
-            float t = static_cast<float>(i) / (numInterpolated + 1);
-            sf::Vector2f interpolatedPos = lastPoint * (1.f - t) + position * t;
-            m_points.push_back(interpolatedPos);
-
-            drawStrokeSegment(canvas);
-        }
-    }
-
-    m_points.push_back(position);
-    drawStrokeSegment(canvas);
+    processInputPoint(canvas, position, 1.0f);
 }
 
 void BrushTool::onMouseUp(Canvas& canvas, sf::Vector2f position) {
-    m_points.clear();
+    m_isDrawing = false;
 }
 
-// ======================
-// Drawing helpers
-// ======================
+void BrushTool::createBrushTexture() {
+    // Create a soft circular brush texture with feathered edges
+    unsigned textureSize = 64;
 
-void BrushTool::drawDot(Canvas& canvas, const sf::Vector2f& position) {
-    sf::CircleShape brush(m_size);
-    brush.setFillColor(m_color);
-    brush.setOrigin({ m_size, m_size });
-    brush.setPosition(position);
+    sf::RenderTexture rtex;
+    rtex.resize(sf::Vector2u(textureSize, textureSize));
+    rtex.clear(sf::Color::Transparent);
 
-    canvas.draw(brush, position);
-}
+    float center = textureSize / 2.f;
+    float maxRadius = textureSize / 2.f;
 
-void BrushTool::drawLinearSegment(
-    Canvas& canvas,
-    const sf::Vector2f& from,
-    const sf::Vector2f& to
-) {
-    const int segments = 10;
+    // Draw soft circle using variable falloff based on softness setting
+    // Softness controls the exponent: 1.0 = linear (hard), 7.0 = very soft
+    for (int r = static_cast<int>(maxRadius); r > 0; --r) {
+        float normalizedRadius = static_cast<float>(r) / maxRadius;
 
-    sf::CircleShape brush(m_size);
-    brush.setFillColor(m_color);
-    brush.setOrigin({ m_size, m_size });
-
-    for (int i = 0; i <= segments; ++i) {
-        float t = static_cast<float>(i) / segments;
-        sf::Vector2f pos = from * (1.f - t) + to * t;
-
-        brush.setPosition(pos);
-        canvas.draw(brush, pos);
-    }
-}
-
-void BrushTool::drawSmoothSegment(Canvas& canvas) {
-    const int segments = 20;
-
-    sf::CircleShape brush(m_size);
-    brush.setFillColor(m_color);
-    brush.setOrigin({ m_size, m_size });
-
-    size_t n = m_points.size();
-    const auto& p0 = m_points[n - 3];
-    const auto& p1 = m_points[n - 2];
-    const auto& p2 = m_points[n - 1];
-
-    sf::Vector2f mid1 = (p0 + p1) * 0.5f;
-    sf::Vector2f mid2 = (p1 + p2) * 0.5f;
-
-    for (int i = 0; i <= segments; ++i) {
-        float t = static_cast<float>(i) / segments;
-        sf::Vector2f pos = bezier(mid1, p1, mid2, t);
-
-        brush.setPosition(pos);
-        canvas.draw(brush, pos);
-    }
-}
-
-void BrushTool::drawStrokeSegment(Canvas& canvas) {
-    size_t n = m_points.size();
-
-    if (n < 2) return;
-
-    if (n == 2) {
-        // Just two points: linear interpolation
-        drawLinearSegment(canvas, m_points[0], m_points[1]);
-    }
-    else if (n == 3) {
-        // Three points: simple smooth curve
-        drawSmoothSegment(canvas);
-    }
-    else {
-        // Four or more points: use Catmull-Rom for smoother results
-        const int segments = 20;
-
-        sf::CircleShape brush(m_size);
-        brush.setFillColor(m_color);
-        brush.setOrigin({ m_size, m_size });
-
-        const auto& p0 = m_points[n - 4];
-        const auto& p1 = m_points[n - 3];
-        const auto& p2 = m_points[n - 2];
-        const auto& p3 = m_points[n - 1];
-
-        for (int i = 0; i <= segments; ++i) {
-            float t = static_cast<float>(i) / segments;
-            sf::Vector2f pos = catmullRom(p0, p1, p2, p3, t);
-
-            brush.setPosition(pos);
-            canvas.draw(brush, pos);
+        // Apply power function with softness as exponent
+        // Higher softness = softer edges
+        float opacity = 1.f;
+        for (int i = 0; i < static_cast<int>(m_softness); ++i) {
+            opacity *= normalizedRadius;
         }
+        opacity = 1.f - opacity;
+
+        std::uint8_t alpha = static_cast<std::uint8_t>(opacity * 255.f);
+
+        sf::CircleShape circle(static_cast<float>(r));
+        circle.setFillColor(sf::Color(255, 255, 255, alpha));
+        circle.setOrigin(sf::Vector2f(static_cast<float>(r), static_cast<float>(r)));
+        circle.setPosition(sf::Vector2f(center, center));
+
+        rtex.draw(circle);
     }
+
+    rtex.display();
+    m_brushTexture = rtex.getTexture();
+    m_brushTexture.setSmooth(true);
+    m_textureCreated = true;
+}
+
+void BrushTool::processInputPoint(Canvas& canvas, sf::Vector2f position, float pressure) {
+    // Create raw input point
+    StrokePoint rawPoint(position, pressure);
+
+    // Calculate speed
+    float dx = position.x - m_lastPoint.position.x;
+    float dy = position.y - m_lastPoint.position.y;
+    rawPoint.speed = std::sqrt(dx * dx + dy * dy);
+
+    // Stabilize path
+    StrokePoint stabilizedPoint = m_stabilizer->addPoint(rawPoint);
+
+    // Schedule dabs based on stabilized point
+    auto dabs = m_dabScheduler->scheduleDabs(stabilizedPoint, m_lastPoint);
+
+    // Evaluate dabs with dynamics
+    for (auto& dab : dabs) {
+        m_dynamics->evaluateDab(dab, stabilizedPoint, m_color);
+    }
+
+    // Paint dabs to canvas
+    m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size);
+
+    m_lastPoint = stabilizedPoint;
 }
