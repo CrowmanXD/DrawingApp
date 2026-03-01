@@ -2,9 +2,10 @@
 #include "Canvas.h"
 
 #include <SFML/Graphics/Sprite.hpp>
-#include <SFML/Graphics/RenderTexture.hpp>
-#include <SFML/Graphics/CircleShape.hpp>
+#include <SFML/Graphics/Image.hpp>
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 BrushTool::BrushTool()
     : m_color(sf::Color::Black),
@@ -18,8 +19,8 @@ BrushTool::BrushTool()
     m_dynamics = std::make_unique<BrushDynamics>();
     m_compositor = std::make_unique<DabCompositor>();
 
-    // Much higher jitter to break spacing regularity
-    m_dabScheduler->setJitter(2.0f);
+    // Keep default jitter subtle; high jitter makes spacing artifacts visible.
+    m_dabScheduler->setJitter(0.05f);
 
     // Configure dynamics with default influences
     m_dynamics->setBaseSize(1.0f);
@@ -37,6 +38,9 @@ BrushTool::BrushTool()
     // Higher flow for better coverage with soft brush
     m_dynamics->setBaseFlow(0.45f);
 
+    // Initialize spacing from current size.
+    setSize(m_size);
+
     createBrushTexture();
 }
 
@@ -50,9 +54,8 @@ sf::Color BrushTool::getColor() const {
 
 void BrushTool::setSize(float size) {
     m_size = size;
-    // Set dab spacing to 2% of brush size for ULTRA dense coverage
-    // This ensures dabs overlap so much that individual stamps disappear
-    m_dabScheduler->setMinDistance(std::max(0.1f, size * 0.02f));
+    // Dab spacing tuned for smooth continuous coverage without overdraw spikes.
+    m_dabScheduler->setMinDistance(std::max(0.5f, size * 0.10f));
 }
 
 float BrushTool::getSize() const {
@@ -99,6 +102,11 @@ void BrushTool::onMouseDown(Canvas& canvas, sf::Vector2f position) {
 
     m_stabilizer->reset();
     m_dabScheduler->reset();
+
+    // Stamp immediately so stroke heads are solid and not "beaded".
+    Dab firstDab(position);
+    m_dynamics->evaluateDab(firstDab, m_lastPoint, m_color);
+    m_compositor->paintDab(canvas, firstDab, m_brushTexture, m_size);
 }
 
 void BrushTool::onMouseMove(Canvas& canvas, sf::Vector2f position) {
@@ -113,41 +121,34 @@ void BrushTool::onMouseUp(Canvas& canvas, sf::Vector2f position) {
 }
 
 void BrushTool::createBrushTexture() {
-    // Create a soft circular brush texture with feathered edges
-    unsigned textureSize = 64;
+    // Generate a radial brush mask directly in an image.
+    // Important: keep RGB white even at alpha=0 to avoid dark halos when sampling.
+    constexpr unsigned textureSize = 64;
+    const float center = static_cast<float>(textureSize - 1) * 0.5f;
+    const float maxRadius = static_cast<float>(textureSize) * 0.5f;
 
-    sf::RenderTexture rtex;
-    rtex.resize(sf::Vector2u(textureSize, textureSize));
-    rtex.clear(sf::Color::Transparent);
+    sf::Image image;
+    image.resize({ textureSize, textureSize }, sf::Color(255, 255, 255, 0));
 
-    float center = textureSize / 2.f;
-    float maxRadius = textureSize / 2.f;
+    const float hardness = std::clamp(1.0f / std::max(1.0f, m_softness), 0.01f, 1.0f);
 
-    // Draw soft circle using variable falloff based on softness setting
-    // Softness controls the exponent: 1.0 = linear (hard), 7.0 = very soft
-    for (int r = static_cast<int>(maxRadius); r > 0; --r) {
-        float normalizedRadius = static_cast<float>(r) / maxRadius;
+    for (unsigned y = 0; y < textureSize; ++y) {
+        for (unsigned x = 0; x < textureSize; ++x) {
+            const float dx = static_cast<float>(x) - center;
+            const float dy = static_cast<float>(y) - center;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            const float normalized = std::clamp(dist / maxRadius, 0.0f, 1.0f);
 
-        // Apply power function with softness as exponent
-        // Higher softness = softer edges
-        float opacity = 1.f;
-        for (int i = 0; i < static_cast<int>(m_softness); ++i) {
-            opacity *= normalizedRadius;
+            // Soft edge profile with adjustable hardness.
+            const float t = std::pow(normalized, hardness);
+            const float alpha = 1.0f - std::clamp(t, 0.0f, 1.0f);
+
+            image.setPixel({ x, y }, sf::Color(255, 255, 255,
+                static_cast<std::uint8_t>(alpha * 255.0f)));
         }
-        opacity = 1.f - opacity;
-
-        std::uint8_t alpha = static_cast<std::uint8_t>(opacity * 255.f);
-
-        sf::CircleShape circle(static_cast<float>(r));
-        circle.setFillColor(sf::Color(255, 255, 255, alpha));
-        circle.setOrigin(sf::Vector2f(static_cast<float>(r), static_cast<float>(r)));
-        circle.setPosition(sf::Vector2f(center, center));
-
-        rtex.draw(circle);
     }
 
-    rtex.display();
-    m_brushTexture = rtex.getTexture();
+    m_brushTexture.loadFromImage(image);
     m_brushTexture.setSmooth(true);
     m_textureCreated = true;
 }
