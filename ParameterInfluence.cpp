@@ -17,7 +17,8 @@ float SpeedInfluence::evaluate(const StrokePoint& point, float random) const {
     // Normalize to 0.0 - 1.0
     float normalized = (clampedSpeed - minSpeed) / (maxSpeed - minSpeed);
     
-    return strength * normalized;
+    // Inverse mapping: slower movement lays down more paint.
+    return strength * (1.0f - normalized);
 }
 
 float RandomInfluence::evaluate(const StrokePoint& point, float random) const {

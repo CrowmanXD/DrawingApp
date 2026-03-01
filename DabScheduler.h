@@ -28,10 +28,4 @@ private:
 
     std::mt19937 m_rng;
     std::uniform_real_distribution<float> m_randomDist;
-
-    // Interpolate dabs between two points
-    std::vector<sf::Vector2f> interpolateDabPositions(
-        const sf::Vector2f& from,
-        const sf::Vector2f& to
-    );
 };
