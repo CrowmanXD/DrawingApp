@@ -14,7 +14,6 @@ public:
 
     void run();
 
-    // Getters for UI to access tool properties
     sf::Color getBrushColor() const;
     void setBrushColor(const sf::Color& color);
     float getBrushSize() const;
@@ -27,13 +26,14 @@ public:
     void setBrushFlow(float flow);
     float getBrushSoftness() const;
     void setBrushSoftness(float softness);
+    bool isEraser() const;
+    void setEraser(bool isEraser);
 
 private:
     void processEvents();
     void update(sf::Time deltaTime);
     void render();
 
-private:
     sf::RenderWindow m_window;
     bool m_running = true;
     ImGuiLayer m_imgui;

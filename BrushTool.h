@@ -11,7 +11,6 @@
 #include <vector>
 #include <memory>
 
-// High-level brush tool using Krita-style architecture
 class BrushTool : public Tool {
 public:
     BrushTool();
@@ -34,6 +33,9 @@ public:
     void setSoftness(float softness);
     float getSoftness() const;
 
+    void setEraser(bool isEraser) { m_isEraser = isEraser; }
+    bool isEraser() const { return m_isEraser; }
+
     void onMouseDown(Canvas& canvas, sf::Vector2f position) override;
     void onMouseMove(Canvas& canvas, sf::Vector2f position) override;
     void onMouseUp(Canvas& canvas, sf::Vector2f position) override;
@@ -45,7 +47,8 @@ private:
     // Process raw input and emit dabs
     void processInputPoint(Canvas& canvas, sf::Vector2f position, float pressure = 1.0f);
 
-private:
+    sf::BlendMode getCurrentBlendMode() const;
+
     // Brush engine components
     std::unique_ptr<PathStabilizer> m_stabilizer;
     std::unique_ptr<DabScheduler> m_dabScheduler;
@@ -55,11 +58,13 @@ private:
     // Brush data
     sf::Color m_color;
     float m_size;
-    float m_softness;  // Controls brush falloff curve (1.0 = hard, 7.0 = soft)
+    float m_softness;
     sf::Texture m_brushTexture;
     bool m_textureCreated = false;
 
     // Stroke tracking
     StrokePoint m_lastPoint;
     bool m_isDrawing = false;
+
+    bool m_isEraser = false;
 };

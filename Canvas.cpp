@@ -4,7 +4,7 @@
 Canvas::Canvas(sf::Vector2u size) {
     m_texture.resize(size);
     // Use transparent background to support alpha blending
-    m_texture.clear(sf::Color(255, 255, 255, 255));
+    m_texture.clear(sf::Color(255, 255, 255, 0));
     m_texture.display();
 }
 
@@ -30,16 +30,6 @@ void Canvas::endStroke() {
         std::move(afterImage)
     );
     m_undoStack.push(std::move(cmd));
-}
-
-void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
-    // Only draw if a stroke is currently active
-    if (!m_inStroke)
-        return;
-
-    // Ensure alpha blending is enabled
-    m_texture.draw(drawable, sf::RenderStates(sf::BlendAlpha));
-    m_texture.display();
 }
 
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states) {

@@ -20,9 +20,17 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
     ImGui::SFML::Update(window, deltaTime);
 
     // Brush settings panel
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_FirstUseEver);
-    ImGui::Begin("Brush Settings");
+    // Use ImGuiCond_Always to override any saved positions in the imgui.ini file
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(300, 420), ImGuiCond_Always);
+
+    // Combine flags to lock the window behavior
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove
+        | ImGuiWindowFlags_NoResize
+        | ImGuiWindowFlags_NoCollapse;
+
+    // Pass the flags into the Begin function
+    ImGui::Begin("Brush Settings", nullptr, flags);
 
     // Color picker
     sf::Color currentColor = app.getBrushColor();
@@ -42,6 +50,12 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         );
         app.setBrushColor(newColor);
     }
+
+    bool isEraser = app.isEraser();
+    if (ImGui::Checkbox("Eraser Mode", &isEraser)) {
+        app.setEraser(isEraser);
+    }
+    ImGui::Separator();
 
     // Brush size slider
     float size = app.getBrushSize();

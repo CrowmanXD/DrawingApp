@@ -77,11 +77,19 @@ void Application::update(sf::Time deltaTime) {
 }
 
 void Application::render() {
+    // 1. Clear the window to your dark gray UI background
     m_window.clear(sf::Color(40, 40, 40));
-    sf::Sprite canvasSprite(m_canvas.getFinalTexture());
 
+    // 2. Draw a solid white "paper" background exactly the size of your canvas
+    sf::RectangleShape paperBg(sf::Vector2f(m_window.getSize().x, m_window.getSize().y));
+    paperBg.setFillColor(sf::Color::White);
+    m_window.draw(paperBg);
+
+    // 3. Draw your transparent canvas on top of the white paper
+    sf::Sprite canvasSprite(m_canvas.getFinalTexture());
     m_window.draw(canvasSprite);
 
+    // 4. Draw UI
     m_imgui.render(m_window);
     m_window.display();
 }
@@ -132,4 +140,12 @@ float Application::getBrushSoftness() const {
 
 void Application::setBrushSoftness(float softness) {
     m_activeTool->setSoftness(softness);
+}
+
+bool Application::isEraser() const {
+    return m_activeTool->isEraser();
+}
+
+void Application::setEraser(bool isEraser) {
+    m_activeTool->setEraser(isEraser);
 }

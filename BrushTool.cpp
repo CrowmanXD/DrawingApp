@@ -10,7 +10,7 @@
 BrushTool::BrushTool()
     : m_color(sf::Color::Black),
     m_size(5.f),
-    m_softness(12.0f),  // VERY soft - almost Gaussian
+    m_softness(12.0f),
     m_isDrawing(false) {
 
     // Initialize brush engine components
@@ -29,11 +29,6 @@ BrushTool::BrushTool()
 
     // Add pressure influence to size (pressure increases brush size)
     m_dynamics->addSizeInfluence(std::make_shared<PressureInfluence>());
-
-    // Add speed influence to opacity (slow strokes are more opaque)
-    auto speedInfluence = std::make_shared<SpeedInfluence>();
-    speedInfluence->strength = 0.3f;  // Moderate influence
-    m_dynamics->addOpacityInfluence(speedInfluence);
 
     // Higher flow for better coverage with soft brush
     m_dynamics->setBaseFlow(0.45f);
@@ -54,7 +49,6 @@ sf::Color BrushTool::getColor() const {
 
 void BrushTool::setSize(float size) {
     m_size = size;
-    // Dab spacing tuned for smooth continuous coverage without overdraw spikes.
     m_dabScheduler->setMinDistance(std::max(0.5f, size * 0.10f));
 }
 
@@ -106,7 +100,7 @@ void BrushTool::onMouseDown(Canvas& canvas, sf::Vector2f position) {
     // Stamp immediately so stroke heads are solid and not "beaded".
     Dab firstDab(position);
     m_dynamics->evaluateDab(firstDab, m_lastPoint, m_color);
-    m_compositor->paintDab(canvas, firstDab, m_brushTexture, m_size);
+    m_compositor->paintDab(canvas, firstDab, m_brushTexture, m_size, getCurrentBlendMode());
 }
 
 void BrushTool::onMouseMove(Canvas& canvas, sf::Vector2f position) {
@@ -122,7 +116,6 @@ void BrushTool::onMouseUp(Canvas& canvas, sf::Vector2f position) {
 
 void BrushTool::createBrushTexture() {
     // Generate a radial brush mask directly in an image.
-    // Important: keep RGB white even at alpha=0 to avoid dark halos when sampling.
     constexpr unsigned textureSize = 64;
     const float center = static_cast<float>(textureSize - 1) * 0.5f;
     const float maxRadius = static_cast<float>(textureSize) * 0.5f;
@@ -130,7 +123,7 @@ void BrushTool::createBrushTexture() {
     sf::Image image;
     image.resize({ textureSize, textureSize }, sf::Color(255, 255, 255, 0));
 
-    const float hardness = std::clamp(1.0f / std::max(1.0f, m_softness), 0.01f, 1.0f);
+    const float hardness = 30.0f / m_softness;
 
     for (unsigned y = 0; y < textureSize; ++y) {
         for (unsigned x = 0; x < textureSize; ++x) {
@@ -174,7 +167,20 @@ void BrushTool::processInputPoint(Canvas& canvas, sf::Vector2f position, float p
     }
 
     // Paint dabs to canvas
-    m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size);
+    m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode());
 
     m_lastPoint = stabilizedPoint;
+}
+
+sf::BlendMode BrushTool::getCurrentBlendMode() const {
+    if (m_isEraser) {
+        return sf::BlendMode(
+            // COLOR MATH: Src * 0 + Dst * 1 (Leaves the canvas RGB pixels exactly as they are)
+            sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add,
+
+            // ALPHA MATH: Src * 0 + Dst * (1 - BrushAlpha) (Carves out the transparency)
+            sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+        );
+    }
+    return sf::BlendAlpha;
 }

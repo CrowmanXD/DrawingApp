@@ -31,7 +31,7 @@ struct PressureInfluence : public ParameterInfluence {
 // Speed-based influence (e.g., opacity decreases at slow speeds)
 struct SpeedInfluence : public ParameterInfluence {
     float minSpeed = 0.1f;
-    float maxSpeed = 5.0f;
+    float maxSpeed = 100.0f;
     SpeedInfluence() { source = InfluenceSource::Speed; }
     float evaluate(const StrokePoint& point, float random = 0.5f) const override;
 };
