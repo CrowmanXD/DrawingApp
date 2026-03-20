@@ -6,6 +6,7 @@
 #include <memory>
 #include "Tool.h"
 #include "BrushTool.h"
+#include "AppState.h"
 
 class Application {
 public:
@@ -13,6 +14,10 @@ public:
     ~Application();
 
     void run();
+
+    // State management
+    AppState getState() const;
+    void startDrawing(unsigned int width, unsigned int height);
 
     sf::Color getBrushColor() const;
     void setBrushColor(const sf::Color& color);
@@ -29,6 +34,10 @@ public:
     bool isEraser() const;
     void setEraser(bool isEraser);
 
+    sf::Vector2f getCanvasOffset() const;
+    sf::Vector2u getWindowSize() const;
+    Canvas& getCanvas() const;
+
 private:
     void processEvents();
     void update(sf::Time deltaTime);
@@ -37,7 +46,8 @@ private:
     sf::RenderWindow m_window;
     bool m_running = true;
     ImGuiLayer m_imgui;
-    Canvas m_canvas;
+    AppState m_state = AppState::StartupScreen;
+    std::unique_ptr<Canvas> m_canvas;
     std::unique_ptr<BrushTool> m_activeTool;
 };
 

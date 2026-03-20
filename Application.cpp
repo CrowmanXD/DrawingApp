@@ -2,11 +2,10 @@
 
 Application::Application()
     : m_window(
-        sf::VideoMode({ 1200u, 800u }),
+        sf::VideoMode::getDesktopMode(),
         "Licenta Desen C++",
         sf::Style::Default
-    ),
-    m_canvas(m_window.getSize())
+    )
 {
     m_window.setFramerateLimit(60);
     m_imgui.init(m_window);
@@ -29,6 +28,29 @@ void Application::run() {
     }
 }
 
+sf::Vector2f Application::getCanvasOffset() const {
+    if (!m_canvas) return { 300.f, 0.f };
+
+    float workspaceWidth = static_cast<float>(m_window.getSize().x) - 300.f;
+    float workspaceHeight = static_cast<float>(m_window.getSize().y);
+
+    float canvasWidth = static_cast<float>(m_canvas->getSize().x);
+    float canvasHeight = static_cast<float>(m_canvas->getSize().y);
+
+    float offsetX = 300.f + (workspaceWidth - canvasWidth) / 2.f;
+    float offsetY = (workspaceHeight - canvasHeight) / 2.f;
+
+    return { offsetX, offsetY };
+}
+
+// This is called by the UI when you click "Create"
+void Application::startDrawing(unsigned int width, unsigned int height) {
+    m_canvas = std::make_unique<Canvas>(sf::Vector2u(width, height));
+    // Clear the new canvas to transparent white to avoid dark halos
+    m_canvas->clear(sf::Color(255, 255, 255, 0));
+    m_state = AppState::DrawingEditor;
+}
+
 void Application::processEvents() {
     while (const std::optional event = m_window.pollEvent()) {
         m_imgui.processEvent(m_window, *event);
@@ -38,34 +60,57 @@ void Application::processEvents() {
             m_running = false;
         }
 
-        // Handle keyboard shortcuts for undo/redo
-        if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
-            if (key->code == sf::Keyboard::Key::Z) {
-                m_canvas.undo();
-            }
-            else if (key->code == sf::Keyboard::Key::Y) {
-                m_canvas.redo();
-            }
-        }
+        if (m_state == AppState::DrawingEditor && m_canvas) {
 
-        if (!m_imgui.wantsCaptureMouse()) {
-            if (const auto* mouse = event->getIf<sf::Event::MouseButtonPressed>()) {
-                if (mouse->button == sf::Mouse::Button::Left) {
-                    m_canvas.beginStroke();
-                    m_activeTool->onMouseDown(m_canvas, sf::Vector2f(mouse->position));
+            // Handle keyboard shortcuts for undo/redo
+            if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
+                if (key->code == sf::Keyboard::Key::Z) {
+                    m_canvas->undo();
+                }
+                else if (key->code == sf::Keyboard::Key::Y) {
+                    m_canvas->redo();
                 }
             }
 
-            if (const auto* mouse = event->getIf<sf::Event::MouseMoved>()) {
-                m_activeTool->onMouseMove(m_canvas, sf::Vector2f(mouse->position)
-                );
-            }
+            if (!m_imgui.wantsCaptureMouse()) {
+                sf::Vector2f offset = getCanvasOffset();
+                sf::Vector2u canvasSize = m_canvas->getSize();
 
-            if (const auto* mouse = event->getIf<sf::Event::MouseButtonReleased>()) {
-                if (mouse->button == sf::Mouse::Button::Left) {
-                    m_activeTool->onMouseUp(m_canvas, sf::Vector2f(mouse->position)
-                    );
-                    m_canvas.endStroke();
+                // 1. Handle Mouse Down
+                if (const auto* mousePress = event->getIf<sf::Event::MouseButtonPressed>()) {
+                    float canvasX = static_cast<float>(mousePress->position.x) - offset.x;
+                    float canvasY = static_cast<float>(mousePress->position.y) - offset.y;
+                    sf::Vector2f canvasPos(canvasX, canvasY);
+
+                    if (mousePress->button == sf::Mouse::Button::Left) {
+                        // Only start drawing if the click is actually on the canvas (past the 300px UI)
+                        if (canvasX >= 0.f && canvasX <= canvasSize.x &&
+                            canvasY >= 0.f && canvasY <= canvasSize.y) {
+                            m_canvas->beginStroke();
+                            m_activeTool->onMouseDown(*m_canvas, canvasPos);
+                        }
+                    }
+                }
+
+                // 2. Handle Mouse Move
+                if (const auto* mouseMove = event->getIf<sf::Event::MouseMoved>()) {
+                    float canvasX = static_cast<float>(mouseMove->position.x) - offset.x;
+                    float canvasY = static_cast<float>(mouseMove->position.y) - offset.y;
+                    sf::Vector2f canvasPos(canvasX, canvasY);
+
+                    m_activeTool->onMouseMove(*m_canvas, canvasPos);
+                }
+
+                // 3. Handle Mouse Up
+                if (const auto* mouseRelease = event->getIf<sf::Event::MouseButtonReleased>()) {
+                    float canvasX = static_cast<float>(mouseRelease->position.x) - offset.x;
+                    float canvasY = static_cast<float>(mouseRelease->position.y) - offset.y;
+                    sf::Vector2f canvasPos(canvasX, canvasY);
+
+                    if (mouseRelease->button == sf::Mouse::Button::Left) {
+                        m_activeTool->onMouseUp(*m_canvas, canvasPos);
+                        m_canvas->endStroke();
+                    }
                 }
             }
         }
@@ -80,15 +125,18 @@ void Application::render() {
     // 1. Clear the window to your dark gray UI background
     m_window.clear(sf::Color(40, 40, 40));
 
-    // 2. Draw a solid white "paper" background exactly the size of your canvas
-    sf::RectangleShape paperBg(sf::Vector2f(m_window.getSize().x, m_window.getSize().y));
-    paperBg.setFillColor(sf::Color::White);
-    m_window.draw(paperBg);
+    if (m_state == AppState::DrawingEditor && m_canvas) {
+        sf::Vector2f offset = getCanvasOffset();
 
-    // 3. Draw your transparent canvas on top of the white paper
-    sf::Sprite canvasSprite(m_canvas.getFinalTexture());
-    m_window.draw(canvasSprite);
+        // 1. Draw the solid white "paper" background first
+        sf::RectangleShape paperBg(sf::Vector2f(m_canvas->getLayers()[0]->texture->getSize()));
+        paperBg.setPosition(offset);
+        paperBg.setFillColor(sf::Color::White);
+        m_window.draw(paperBg);
 
+        // 2. Ask the Canvas to draw all its visible layers on top of the paper!
+        m_canvas->renderToTarget(m_window, offset);
+    }
     // 4. Draw UI
     m_imgui.render(m_window);
     m_window.display();
@@ -148,4 +196,16 @@ bool Application::isEraser() const {
 
 void Application::setEraser(bool isEraser) {
     m_activeTool->setEraser(isEraser);
+}
+
+sf::Vector2u Application::getWindowSize() const {
+    return m_window.getSize();
+}
+
+Canvas& Application::getCanvas() const {
+    return *m_canvas;
+}
+
+AppState Application::getState() const {
+    return m_state;
 }

@@ -9,7 +9,8 @@ class Canvas;
 class StrokeUndoCommand : public UndoCommand {
 public:
     StrokeUndoCommand(std::unique_ptr<sf::Image> before,
-                      std::unique_ptr<sf::Image> after);
+        std::unique_ptr<sf::Image> after,
+        int layerIndex);
 
     void undo(Canvas& canvas) override;
     void redo(Canvas& canvas) override;
@@ -17,4 +18,5 @@ public:
 private:
     std::unique_ptr<sf::Image> m_before;
     std::unique_ptr<sf::Image> m_after;
+    int m_layerIndex;
 };
