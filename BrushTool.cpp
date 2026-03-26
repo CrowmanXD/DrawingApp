@@ -174,13 +174,16 @@ void BrushTool::processInputPoint(Canvas& canvas, sf::Vector2f position, float p
 
 sf::BlendMode BrushTool::getCurrentBlendMode() const {
     if (m_isEraser) {
+        // Erase BOTH Color and Alpha by multiplying existing pixels by (1 - BrushAlpha)
         return sf::BlendMode(
-            // COLOR MATH: Src * 0 + Dst * 1 (Leaves the canvas RGB pixels exactly as they are)
-            sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add,
-
-            // ALPHA MATH: Src * 0 + Dst * (1 - BrushAlpha) (Carves out the transparency)
+            sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
             sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
         );
     }
-    return sf::BlendAlpha;
+
+    // Premultiplied Alpha Blend Mode for drawing soft brushes to transparent layers!
+    return sf::BlendMode(
+        sf::BlendMode::Factor::SrcAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+        sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+    );
 }

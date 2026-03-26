@@ -15,7 +15,6 @@ public:
 
     void run();
 
-    // State management
     AppState getState() const;
     void startDrawing(unsigned int width, unsigned int height);
 
@@ -42,6 +41,11 @@ private:
     void processEvents();
     void update(sf::Time deltaTime);
     void render();
+
+    float m_zoom = 1.0f;
+    sf::Vector2f m_pan = { 0.f, 0.f };
+    bool m_isPanning = false;
+    sf::Vector2i m_lastMousePos;
 
     sf::RenderWindow m_window;
     bool m_running = true;

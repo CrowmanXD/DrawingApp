@@ -16,8 +16,8 @@ void StrokeUndoCommand::undo(Canvas& canvas) {
         if (texture.loadFromImage(*m_before)) {
             sf::Sprite sprite(texture);
             auto& layerTex = canvas.getLayers()[m_layerIndex]->texture;
-            layerTex->clear(sf::Color(255, 255, 255, 0));
-            layerTex->draw(sprite);
+            layerTex->clear(sf::Color(0, 0, 0, 0));
+            layerTex->draw(sprite, sf::RenderStates(sf::BlendNone));
             layerTex->display();
         }
     }
@@ -29,8 +29,8 @@ void StrokeUndoCommand::redo(Canvas& canvas) {
         if (texture.loadFromImage(*m_after)) {
             sf::Sprite sprite(texture);
             auto& layerTex = canvas.getLayers()[m_layerIndex]->texture;
-            layerTex->clear(sf::Color(255, 255, 255, 0));
-            layerTex->draw(sprite);
+            layerTex->clear(sf::Color(0, 0, 0, 0));
+            layerTex->draw(sprite, sf::RenderStates(sf::BlendNone));
             layerTex->display();
         }
     }

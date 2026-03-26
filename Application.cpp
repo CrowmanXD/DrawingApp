@@ -34,11 +34,11 @@ sf::Vector2f Application::getCanvasOffset() const {
     float workspaceWidth = static_cast<float>(m_window.getSize().x) - 300.f;
     float workspaceHeight = static_cast<float>(m_window.getSize().y);
 
-    float canvasWidth = static_cast<float>(m_canvas->getSize().x);
-    float canvasHeight = static_cast<float>(m_canvas->getSize().y);
+    float scaledWidth = static_cast<float>(m_canvas->getSize().x) * m_zoom;
+    float scaledHeight = static_cast<float>(m_canvas->getSize().y) * m_zoom;
 
-    float offsetX = 300.f + (workspaceWidth - canvasWidth) / 2.f;
-    float offsetY = (workspaceHeight - canvasHeight) / 2.f;
+    float offsetX = 300.f + (workspaceWidth - scaledWidth) / 2.f + m_pan.x;
+    float offsetY = (workspaceHeight - scaledHeight) / 2.f + m_pan.y;
 
     return { offsetX, offsetY };
 }
@@ -76,39 +76,71 @@ void Application::processEvents() {
                 sf::Vector2f offset = getCanvasOffset();
                 sf::Vector2u canvasSize = m_canvas->getSize();
 
-                // 1. Handle Mouse Down
+                // --- ZOOMING (Scroll Wheel) ---
+                if (const auto* scroll = event->getIf<sf::Event::MouseWheelScrolled>()) {
+                    if (scroll->wheel == sf::Mouse::Wheel::Vertical) {
+                        float zoomFactor = 1.1f; // 10% zoom per scroll click
+                        if (scroll->delta > 0) m_zoom *= zoomFactor;
+                        else if (scroll->delta < 0) m_zoom /= zoomFactor;
+
+                        // Prevent zooming infinitely far in or out
+                        m_zoom = std::clamp(m_zoom, 0.1f, 10.0f);
+                    }
+                }
+
+                // --- MOUSE DOWN ---
                 if (const auto* mousePress = event->getIf<sf::Event::MouseButtonPressed>()) {
                     float canvasX = static_cast<float>(mousePress->position.x) - offset.x;
                     float canvasY = static_cast<float>(mousePress->position.y) - offset.y;
                     sf::Vector2f canvasPos(canvasX, canvasY);
 
-                    if (mousePress->button == sf::Mouse::Button::Left) {
-                        // Only start drawing if the click is actually on the canvas (past the 300px UI)
-                        if (canvasX >= 0.f && canvasX <= canvasSize.x &&
+                    if (mousePress->button == sf::Mouse::Button::Middle) {
+                        m_isPanning = true;
+                        m_lastMousePos = mousePress->position;
+                    } 
+                    else if (mousePress->button == sf::Mouse::Button::Left) {
+                        // Divide by zoom to map screen pixels to canvas pixels
+                        float canvasX = (static_cast<float>(mousePress->position.x) - offset.x) / m_zoom;
+                        float canvasY = (static_cast<float>(mousePress->position.y) - offset.y) / m_zoom;
+
+                        if (m_canvas->getActiveLayer()->type != LayerType::Folder &&
+                            canvasX >= 0.f && canvasX <= canvasSize.x &&
                             canvasY >= 0.f && canvasY <= canvasSize.y) {
+
                             m_canvas->beginStroke();
-                            m_activeTool->onMouseDown(*m_canvas, canvasPos);
+                            m_activeTool->onMouseDown(*m_canvas, { canvasX, canvasY });
                         }
                     }
                 }
 
-                // 2. Handle Mouse Move
+                // --- MOUSE MOVE ---
                 if (const auto* mouseMove = event->getIf<sf::Event::MouseMoved>()) {
-                    float canvasX = static_cast<float>(mouseMove->position.x) - offset.x;
-                    float canvasY = static_cast<float>(mouseMove->position.y) - offset.y;
-                    sf::Vector2f canvasPos(canvasX, canvasY);
-
-                    m_activeTool->onMouseMove(*m_canvas, canvasPos);
+                    // Handle Panning
+                    if (m_isPanning) {
+                        sf::Vector2i delta = mouseMove->position - m_lastMousePos;
+                        m_pan.x += static_cast<float>(delta.x);
+                        m_pan.y += static_cast<float>(delta.y);
+                        m_lastMousePos = mouseMove->position;
+                    }
+                    // Handle Drawing
+                    else {
+                        float canvasX = (static_cast<float>(mouseMove->position.x) - offset.x) / m_zoom;
+                        float canvasY = (static_cast<float>(mouseMove->position.y) - offset.y) / m_zoom;
+                        m_activeTool->onMouseMove(*m_canvas, { canvasX, canvasY });
+                    }
                 }
 
                 // 3. Handle Mouse Up
                 if (const auto* mouseRelease = event->getIf<sf::Event::MouseButtonReleased>()) {
-                    float canvasX = static_cast<float>(mouseRelease->position.x) - offset.x;
-                    float canvasY = static_cast<float>(mouseRelease->position.y) - offset.y;
-                    sf::Vector2f canvasPos(canvasX, canvasY);
-
-                    if (mouseRelease->button == sf::Mouse::Button::Left) {
-                        m_activeTool->onMouseUp(*m_canvas, canvasPos);
+                    // Stop Panning
+                    if (mouseRelease->button == sf::Mouse::Button::Middle) {
+                        m_isPanning = false;
+                    }
+                    // Stop Drawing
+                    else if (mouseRelease->button == sf::Mouse::Button::Left) {
+                        float canvasX = (static_cast<float>(mouseRelease->position.x) - offset.x) / m_zoom;
+                        float canvasY = (static_cast<float>(mouseRelease->position.y) - offset.y) / m_zoom;
+                        m_activeTool->onMouseUp(*m_canvas, { canvasX, canvasY });
                         m_canvas->endStroke();
                     }
                 }
@@ -131,11 +163,12 @@ void Application::render() {
         // 1. Draw the solid white "paper" background first
         sf::RectangleShape paperBg(sf::Vector2f(m_canvas->getLayers()[0]->texture->getSize()));
         paperBg.setPosition(offset);
+        paperBg.setScale({ m_zoom, m_zoom });
         paperBg.setFillColor(sf::Color::White);
         m_window.draw(paperBg);
 
         // 2. Ask the Canvas to draw all its visible layers on top of the paper!
-        m_canvas->renderToTarget(m_window, offset);
+        m_canvas->renderToTarget(m_window, offset, m_zoom);
     }
     // 4. Draw UI
     m_imgui.render(m_window);
