@@ -1,6 +1,7 @@
 #include "ImGuiLayer.h"
 #include "Application.h"
 #include "LayerUndoCommands.h"
+#include "FileDialogs.h"
 
 #include "imgui.h"
 #include "imgui-SFML.h"
@@ -72,6 +73,30 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
         ImGui::Begin("Brush Settings", nullptr, flags);
         ImGui::PushItemWidth(-130.0f);
+
+        // --- FILE MENU ---
+        ImGui::Text("File Management");
+        ImGui::Spacing();
+
+        if (ImGui::Button("Save As...", ImVec2(130, 0))) {
+            // The filter format is: "Display Name\0*.extension\0"
+            std::string filepath = FileDialogs::saveFile("PNG Image (*.png)\0*.png\0Any File\0*.*\0");
+
+            if (!filepath.empty()) {
+                app.getCanvas().saveToFile(filepath);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Import...", ImVec2(130, 0))) {
+            std::string filepath = FileDialogs::openFile("PNG Image (*.png)\0*.png\0Any File\0*.*\0");
+
+            if (!filepath.empty()) {
+                app.getCanvas().loadFromFile(filepath);
+            }
+        }
+
+        ImGui::Separator();
+        ImGui::Spacing();
 
         // Color picker
         sf::Color currentColor = app.getBrushColor();

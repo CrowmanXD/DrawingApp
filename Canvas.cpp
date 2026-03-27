@@ -327,4 +327,38 @@ void Canvas::clear(const sf::Color& color) {
     getActiveTexture().display();
 }
 
+bool Canvas::saveToFile(const std::string& filename) {
+    // 1. Create a temporary texture the exact size of the canvas
+    sf::RenderTexture exportTexture(m_size);
+    
+    // Clear it to transparent black so the empty areas of your canvas are actually transparent in the PNG!
+    exportTexture.clear(sf::Color(0, 0, 0, 0));
 
+    // 2. Render all the layers to this texture at 1.0x zoom and 0,0 offset
+    renderToTarget(exportTexture, {0.f, 0.f}, 1.0f);
+    exportTexture.display();
+
+    // 3. Download the pixels from the GPU and save them to the hard drive
+    return exportTexture.getTexture().copyToImage().saveToFile(filename);
+}
+
+bool Canvas::loadFromFile(const std::string& filename) {
+    sf::Texture loadedTex;
+    if (!loadedTex.loadFromFile(filename)) return false;
+
+    // 1. Create a brand new layer to hold the imported image
+    addLayer();
+    
+    // addLayer() automatically updates m_activeLayerIndex to the newly created layer
+    auto& activeLayer = m_layers[m_activeLayerIndex];
+    activeLayer->name = "Imported Image";
+
+    // 2. Draw the loaded image exactly as it is onto the new layer
+    activeLayer->texture->clear(sf::Color(0, 0, 0, 0));
+    
+    // We use sf::BlendNone so it perfectly copies the image's transparency without mixing!
+    activeLayer->texture->draw(sf::Sprite(loadedTex), sf::RenderStates(sf::BlendNone));
+    activeLayer->texture->display();
+
+    return true;
+}

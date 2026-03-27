@@ -76,7 +76,8 @@ public:
     void renderToTarget(sf::RenderTarget& target, sf::Vector2f offset, float zoom);
     void clear(const sf::Color& color = sf::Color::White);
 
-
+    bool saveToFile(const std::string& filename);
+    bool loadFromFile(const std::string& filename);
 
 private:
     sf::Vector2u m_size;
