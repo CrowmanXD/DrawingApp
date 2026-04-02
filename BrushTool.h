@@ -1,11 +1,11 @@
 #pragma once
-
 #include "Tool.h"
 #include "StrokePoint.h"
 #include "PathStabilizer.h"
 #include "DabScheduler.h"
 #include "BrushDynamics.h"
 #include "DabCompositor.h"
+
 #include <SFML/Graphics/Color.hpp>
 #include <SFML/Graphics/Texture.hpp>
 #include <vector>
@@ -47,7 +47,7 @@ private:
     // Process raw input and emit dabs
     void processInputPoint(Canvas& canvas, sf::Vector2f position, float pressure = 1.0f);
 
-    sf::BlendMode getCurrentBlendMode() const;
+    sf::BlendMode getCurrentBlendMode(Canvas& canvas) const;
 
     // Brush engine components
     std::unique_ptr<PathStabilizer> m_stabilizer;

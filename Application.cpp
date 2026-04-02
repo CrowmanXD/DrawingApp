@@ -161,14 +161,20 @@ void Application::render() {
         sf::Vector2f offset = getCanvasOffset();
 
         // 1. Draw the solid white "paper" background first
-        sf::RectangleShape paperBg(sf::Vector2f(m_canvas->getLayers()[0]->texture->getSize()));
+        sf::RectangleShape paperBg(sf::Vector2f(m_canvas->getSize()));
         paperBg.setPosition(offset);
-        paperBg.setScale({ m_zoom, m_zoom });
+        paperBg.setScale({ m_zoom, m_zoom }); // Scale the white paper
         paperBg.setFillColor(sf::Color::White);
         m_window.draw(paperBg);
 
-        // 2. Ask the Canvas to draw all its visible layers on top of the paper!
-        m_canvas->renderToTarget(m_window, offset, m_zoom);
+        // 2. Ask the Canvas to build its internal Flat Mask
+        m_canvas->renderComposite();
+
+        // 3. Draw the composite exactly on top of the paper, scaled by your Camera Zoom
+        sf::Sprite compSprite(m_canvas->getCompositeTexture());
+        compSprite.setPosition(offset);
+        compSprite.setScale({ m_zoom, m_zoom });
+        m_window.draw(compSprite);
     }
     // 4. Draw UI
     m_imgui.render(m_window);

@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <vector>
+#include <cstring>
 
 ImGuiLayer::ImGuiLayer() = default;
 ImGuiLayer::~ImGuiLayer() = default;
@@ -61,8 +62,13 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::End();
 	}
     else if (app.getState() == AppState::DrawingEditor) {
-        // --- BRUSH SETTINGS SIDEBAR ---
+        static int layerToDelete = -1;
+        static int layerToDeleteInstantly = -1;
 
+        static int layerToRename = -1;
+        static char renameBuffer[256] = "";
+
+        // --- BRUSH SETTINGS SIDEBAR ---
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(300.f, static_cast<float>(app.getWindowSize().y)), ImGuiCond_Always);
 
@@ -181,24 +187,33 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
         if (activeIdx >= 0 && activeIdx < layers.size()) {
             // --- BLEND MODE DROPDOWN ---
-            const char* blendModeNames[] = { "Normal", "Multiply", "Add (Linear Dodge)", "Pass Through" };
-            int currentBlendInt = static_cast<int>(layers[activeIdx]->blendMode);
+            if (layers[activeIdx]->isClipped) {
+                // Disable the dropdown to indicate clipping forces standard masking logic
+                ImGui::BeginDisabled();
+                int dummy = 0;
+                ImGui::Combo("Blend Mode", &dummy, "Normal (Clipped)\0");
+                ImGui::EndDisabled();
+            }
+            else {
+                const char* blendModeNames[] = { "Normal", "Multiply", "Add (Linear Dodge)", "Pass Through" };
+                int currentBlendInt = static_cast<int>(layers[activeIdx]->blendMode);
 
-            if (ImGui::Combo("Blend Mode", &currentBlendInt, blendModeNames, IM_ARRAYSIZE(blendModeNames))) {
+                if (ImGui::Combo("Blend Mode", &currentBlendInt, blendModeNames, IM_ARRAYSIZE(blendModeNames))) {
 
-                // Content layers cannot be Pass Through, force them back to Normal.
-                if (layers[activeIdx]->type == LayerType::Content && currentBlendInt == 3) {
-                    currentBlendInt = 0;
+                    // Content layers cannot be Pass Through, force them back to Normal.
+                    if (layers[activeIdx]->type == LayerType::Content && currentBlendInt == 3) {
+                        currentBlendInt = 0;
+                    }
+
+                    app.getCanvas().pushUndoCommand(
+                        std::make_unique<BlendModeChangeCommand>(
+                            activeIdx,
+                            static_cast<int>(layers[activeIdx]->blendMode),
+                            currentBlendInt
+                        )
+                    );
+                    layers[activeIdx]->blendMode = static_cast<LayerBlendMode>(currentBlendInt);
                 }
-
-                app.getCanvas().pushUndoCommand(
-                    std::make_unique<BlendModeChangeCommand>(
-                        activeIdx,
-                        static_cast<int>(layers[activeIdx]->blendMode),
-                        currentBlendInt
-                    )
-                );
-                layers[activeIdx]->blendMode = static_cast<LayerBlendMode>(currentBlendInt);
             }
 
             float& currentOpacity = layers[activeIdx]->opacity;
@@ -241,7 +256,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::Separator();
 
         // --- HIERARCHY SORTING ---
-        // We calculate the correct visual order so Folders appear ABOVE their contents!
+        // We calculate the correct visual order so Folders appear above their contents
         std::vector<int> uiOrder;
         std::vector<bool> processed(layers.size(), false);
 
@@ -291,7 +306,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
             ImGui::Checkbox("##vis", &layers[i]->visible);
             ImGui::SameLine();
 
-            // Krita-style visual tree prefixes
+            // Visual tree prefixes
             std::string prefix = "";
             if (layers[i]->type == LayerType::Folder) {
                 prefix = "[F] ";
@@ -302,13 +317,118 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
             else {
                 prefix = "    ";
             }
+            if (layers[i]->isClipped) {
+                prefix += "-> ";
+            }
+
             std::string label = prefix + layers[i]->name;
 
             bool isSelected = (app.getCanvas().getActiveLayerIndex() == i);
 
-            // Render the Selectable (spanning the remaining width for easy dropping)
-            if (ImGui::Selectable(label.c_str(), isSelected)) {
+            // Calculate exact remaining space to avoid ImGui's negative-width clipping bug!
+            float availableWidth = ImGui::GetContentRegionAvail().x;
+
+            // Leave exactly 30 pixels of space on the right side
+            if (ImGui::Selectable(label.c_str(), isSelected, 0, ImVec2(availableWidth - 30.0f, 0))) {
                 app.getCanvas().setActiveLayer(i);
+            }
+
+            // --- RIGHT-CLICK CONTEXT MENU ---
+            if (ImGui::BeginPopupContextItem()) {
+                app.getCanvas().setActiveLayer(i);
+
+                ImGui::TextDisabled("Layer Actions");
+                ImGui::Separator();
+
+                // 1. CONTENT-ONLY ACTIONS (Alpha Lock, Move, Scale)
+                // These should ONLY appear for actual drawing layers
+                if (layers[i]->type == LayerType::Content) {
+
+                    ImGui::Checkbox("Alpha Lock", &layers[i]->alphaLocked);
+                    // --- CLIPPING MASK TOGGLE ---
+                    // Disable clipping for the absolute bottom layer since there's nothing below it to clip to
+                    ImGui::BeginDisabled(i == 0);
+                    bool isClipped = layers[i]->isClipped;
+                    if (ImGui::Checkbox("Clipping Mask", &isClipped)) {
+                        app.getCanvas().pushUndoCommand(std::make_unique<ClipLayerCommand>(i, layers[i]->isClipped, isClipped));
+                        layers[i]->isClipped = isClipped;
+                    }
+                    ImGui::EndDisabled();
+                    ImGui::Separator();
+
+                    static std::unique_ptr<sf::Image> transformBackup;
+
+                    // POSITION SLIDERS
+                    float pos[2] = { layers[i]->offset.x, layers[i]->offset.y };
+                    if (ImGui::DragFloat2("Move (X,Y)", pos, 1.0f)) {
+                        layers[i]->offset = { pos[0], pos[1] };
+                    }
+                    if (ImGui::IsItemActivated()) {
+                        transformBackup = std::make_unique<sf::Image>(layers[i]->texture->getTexture().copyToImage());
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        app.getCanvas().bakeLayerTransform(i, std::move(transformBackup));
+                    }
+
+                    // SCALE SLIDERS
+                    float scl[2] = { layers[i]->scale.x, layers[i]->scale.y };
+                    if (ImGui::DragFloat2("Scale (X,Y)", scl, 0.01f)) {
+                        layers[i]->scale = { scl[0], scl[1] };
+                    }
+                    if (ImGui::IsItemActivated()) {
+                        transformBackup = std::make_unique<sf::Image>(layers[i]->texture->getTexture().copyToImage());
+                    }
+                    if (ImGui::IsItemDeactivatedAfterEdit()) {
+                        app.getCanvas().bakeLayerTransform(i, std::move(transformBackup));
+                    }
+
+                } // <--- IMPORTANT: The Content-Only block MUST close here!
+
+                // 2. GLOBAL ACTIONS (Rename, Delete)
+                // These will now safely appear for BOTH Layers and Folders!
+
+                ImGui::Separator();
+
+                // --- RENAME BUTTON ---
+                if (ImGui::Selectable("Rename Layer/Folder")) {
+                    layerToRename = i;
+                    // Pre-fill the text box with the current name
+                    #ifdef _MSC_VER
+                    strncpy_s(renameBuffer, layers[i]->name.c_str(), sizeof(renameBuffer) - 1);
+                    #else
+                    strncpy(renameBuffer, layers[i]->name.c_str(), sizeof(renameBuffer) - 1);
+                    #endif
+                    renameBuffer[sizeof(renameBuffer) - 1] = '\0';
+                }
+
+                // --- DELETE BUTTON ---
+                ImGui::Separator();
+                if (ImGui::Selectable("Delete Layer/Folder")) {
+                    bool hasChildren = false;
+
+                    // Check if it's a folder that actually has items inside it
+                    if (layers[i]->type == LayerType::Folder) {
+                        if (i + 1 < layers.size() && layers[i + 1]->depth > layers[i]->depth) {
+                            hasChildren = true;
+                        }
+                    }
+
+                    if (hasChildren) {
+                        layerToDelete = i; // Trigger the warning modal
+                    }
+                    else {
+                        layerToDeleteInstantly = i; // Defer safe deletion
+                    }
+                }
+
+                ImGui::EndPopup();
+            }
+
+
+            // --- ALPHA LOCK SYMBOL ---
+            if (layers[i]->alphaLocked) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("[A]");
             }
 
             // --- 1. DRAG SOURCE ---
@@ -340,6 +460,85 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
             ImGui::PopID();
         }
         ImGui::EndChild();
+
+        // --- SAFELY PROCESS DEFERRED DELETION ---
+        if (layerToDeleteInstantly != -1) {
+            app.getCanvas().deleteLayer(layerToDeleteInstantly);
+            layerToDeleteInstantly = -1;
+        }
+
+        // --- DELETE WARNING MODAL ---
+        if (layerToDelete != -1) {
+            ImGui::OpenPopup("Delete Folder Warning");
+        }
+
+        // --- RENAME MODAL ---
+        if (layerToRename != -1 && !ImGui::IsPopupOpen("Rename Layer")) {
+            ImGui::OpenPopup("Rename Layer");
+        }
+
+        // Always center the modal on the screen
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+        if (ImGui::BeginPopupModal("Rename Layer", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("Enter new name:");
+
+            // This trick auto-selects the text box so you can start typing immediately!
+            if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+
+            // ImGuiInputTextFlags_EnterReturnsTrue allows hitting the "Enter" key to submit
+            bool enterPressed = ImGui::InputText("##newName", renameBuffer, sizeof(renameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+
+            ImGui::Spacing();
+
+            if (ImGui::Button("Rename", ImVec2(120, 0)) || enterPressed) {
+                std::string newName(renameBuffer);
+                // Only save the command if the name actually changed and isn't completely empty
+                if (!newName.empty() && newName != layers[layerToRename]->name) {
+                    app.getCanvas().pushUndoCommand(std::make_unique<RenameLayerCommand>(
+                        layerToRename,
+                        layers[layerToRename]->name,
+                        newName
+                    ));
+                    layers[layerToRename]->name = newName;
+                }
+                layerToRename = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                layerToRename = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        else if (layerToRename != -1 && !ImGui::IsPopupOpen("Rename Layer")) {
+            layerToRename = -1; // Failsafe
+        }
+
+        if (ImGui::BeginPopupModal("Delete Folder Warning", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::Text("This folder contains other layers.");
+            ImGui::Text("Deleting it will permanently remove EVERYTHING inside it!");
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (ImGui::Button("Delete All", ImVec2(120, 0))) {
+                app.getCanvas().deleteLayer(layerToDelete);
+                layerToDelete = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                layerToDelete = -1;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        else if (layerToDelete != -1 && !ImGui::IsPopupOpen("Delete Folder Warning")) {
+            // Failsafe in case user presses ESC to force-close the modal
+            layerToDelete = -1;
+        }
 
         ImGui::End();
     }

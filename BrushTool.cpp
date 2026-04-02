@@ -100,7 +100,7 @@ void BrushTool::onMouseDown(Canvas& canvas, sf::Vector2f position) {
     // Stamp immediately so stroke heads are solid and not "beaded".
     Dab firstDab(position);
     m_dynamics->evaluateDab(firstDab, m_lastPoint, m_color);
-    m_compositor->paintDab(canvas, firstDab, m_brushTexture, m_size, getCurrentBlendMode());
+    m_compositor->paintDab(canvas, firstDab, m_brushTexture, m_size, getCurrentBlendMode(canvas));
 }
 
 void BrushTool::onMouseMove(Canvas& canvas, sf::Vector2f position) {
@@ -121,7 +121,9 @@ void BrushTool::createBrushTexture() {
     const float maxRadius = static_cast<float>(textureSize) * 0.5f;
 
     sf::Image image;
-    image.resize({ textureSize, textureSize }, sf::Color(255, 255, 255, 0));
+
+    // FIX 1: Initialize the texture to Transparent Black!
+    image.resize({ textureSize, textureSize }, sf::Color(0, 0, 0, 0));
 
     const float hardness = 30.0f / m_softness;
 
@@ -136,8 +138,9 @@ void BrushTool::createBrushTexture() {
             const float t = std::pow(normalized, hardness);
             const float alpha = 1.0f - std::clamp(t, 0.0f, 1.0f);
 
-            image.setPixel({ x, y }, sf::Color(255, 255, 255,
-                static_cast<std::uint8_t>(alpha * 255.0f)));
+            // FIX 2: Premultiply the RGB channels by the alpha!
+            std::uint8_t a = static_cast<std::uint8_t>(alpha * 255.0f);
+            image.setPixel({ x, y }, sf::Color(a, a, a, a));
         }
     }
 
@@ -167,23 +170,44 @@ void BrushTool::processInputPoint(Canvas& canvas, sf::Vector2f position, float p
     }
 
     // Paint dabs to canvas
-    m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode());
+    m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode(canvas));
 
     m_lastPoint = stabilizedPoint;
 }
 
-sf::BlendMode BrushTool::getCurrentBlendMode() const {
+sf::BlendMode BrushTool::getCurrentBlendMode(Canvas& canvas) const {
+    bool alphaLocked = false;
+    int activeIdx = canvas.getActiveLayerIndex();
+
+    if (activeIdx >= 0 && activeIdx < canvas.getLayers().size()) {
+        alphaLocked = canvas.getLayers()[activeIdx]->alphaLocked;
+    }
+
     if (m_isEraser) {
-        // Erase BOTH Color and Alpha by multiplying existing pixels by (1 - BrushAlpha)
+        if (alphaLocked) {
+            return sf::BlendMode(
+                sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
+            );
+        }
         return sf::BlendMode(
             sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
             sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
         );
     }
 
-    // Premultiplied Alpha Blend Mode for drawing soft brushes to transparent layers!
+    if (alphaLocked) {
+        // ALPHA LOCK BLEND MODE
+        return sf::BlendMode(
+            sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+            sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
+        );
+    }
+
+    // NORMAL PREMULTIPLIED BLEND MODE
+    // FIX 3: Change Color Source Factor to `One` because the texture is natively premultiplied!
     return sf::BlendMode(
-        sf::BlendMode::Factor::SrcAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+        sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
         sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
     );
 }

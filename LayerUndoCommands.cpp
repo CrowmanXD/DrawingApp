@@ -9,7 +9,7 @@ MoveLayerCommand::MoveLayerCommand(int fromIndex, int toIndex)
 }
 
 void MoveLayerCommand::undo(Canvas& canvas) {
-    // To undo, we just move it back to where it came from!
+    // To undo, we just move it back to where it came from
     canvas.moveLayer(m_toIndex, m_fromIndex);
 }
 
@@ -77,4 +77,70 @@ void ReparentLayerCommand::redo(Canvas& canvas) {
     canvas.moveLayer(m_oldIndex, m_newIndex);
     // Directly target the moved layer to apply its new depth
     canvas.getLayers()[m_newIndex]->depth = m_newDepth;
+}
+
+// --- DELETE LAYER COMMAND ---
+DeleteLayerCommand::DeleteLayerCommand(int startIndex, std::vector<std::unique_ptr<Layer>> savedLayers, int oldActiveIndex)
+    : m_startIndex(startIndex), m_count(savedLayers.size()), m_oldActiveIndex(oldActiveIndex), m_savedLayers(std::move(savedLayers)) {
+}
+
+void DeleteLayerCommand::undo(Canvas& canvas) {
+    auto& layers = canvas.getLayers();
+    // Move the layers back onto the canvas at their original position
+    for (int i = 0; i < m_count; ++i) {
+        layers.insert(layers.begin() + m_startIndex + i, std::move(m_savedLayers[i]));
+    }
+    m_savedLayers.clear(); // Clear the command's holding vector
+    canvas.setActiveLayer(m_oldActiveIndex);
+}
+
+void DeleteLayerCommand::redo(Canvas& canvas) {
+    auto& layers = canvas.getLayers();
+    m_savedLayers.reserve(m_count);
+
+    // Scoop the layers back out of the canvas
+    for (int i = 0; i < m_count; ++i) {
+        m_savedLayers.push_back(std::move(layers[m_startIndex]));
+        layers.erase(layers.begin() + m_startIndex);
+    }
+
+    // Fix active layer safely
+    int active = canvas.getActiveLayerIndex();
+    if (active >= layers.size()) {
+        canvas.setActiveLayer(std::max(0, static_cast<int>(layers.size()) - 1));
+    }
+}
+
+// --- RENAME LAYER COMMAND ---
+RenameLayerCommand::RenameLayerCommand(int layerIndex, const std::string& oldName, const std::string& newName)
+    : m_layerIndex(layerIndex), m_oldName(oldName), m_newName(newName) {
+}
+
+void RenameLayerCommand::undo(Canvas& canvas) {
+    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
+        canvas.getLayers()[m_layerIndex]->name = m_oldName;
+    }
+}
+
+void RenameLayerCommand::redo(Canvas& canvas) {
+    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
+        canvas.getLayers()[m_layerIndex]->name = m_newName;
+    }
+}
+
+// --- CLIP LAYER COMMAND ---
+ClipLayerCommand::ClipLayerCommand(int layerIndex, bool oldState, bool newState)
+    : m_layerIndex(layerIndex), m_oldState(oldState), m_newState(newState) {
+}
+
+void ClipLayerCommand::undo(Canvas& canvas) {
+    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
+        canvas.getLayers()[m_layerIndex]->isClipped = m_oldState;
+    }
+}
+
+void ClipLayerCommand::redo(Canvas& canvas) {
+    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
+        canvas.getLayers()[m_layerIndex]->isClipped = m_newState;
+    }
 }

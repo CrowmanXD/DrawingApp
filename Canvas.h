@@ -22,9 +22,14 @@ enum class LayerType {
 struct Layer {
     std::string name;
     bool visible = true;
+    bool alphaLocked = false;
+    bool isClipped = false;
     float opacity = 1.0f;
     LayerBlendMode blendMode = LayerBlendMode::Normal;
     std::unique_ptr<sf::RenderTexture> texture;
+
+    sf::Vector2f offset = { 0.f, 0.f };
+    sf::Vector2f scale = { 1.f, 1.f };
 
     LayerType type = LayerType::Content;
     int depth = 0;
@@ -66,6 +71,7 @@ public:
     void moveToFolder(int layerIndex, int folderIndex);
     void removeFromFolder(int layerIndex);
     void dropLayerToReorder(int sourceIndex, int targetIndex);
+    void deleteLayer(int index);
 
     sf::Vector2u getSize() const { return m_size; }
     sf::RenderTexture& getActiveTexture();
@@ -73,7 +79,10 @@ public:
     void addFolder();
     Layer* getActiveLayer() const { return m_layers[m_activeLayerIndex].get(); }
 
-    void renderToTarget(sf::RenderTarget& target, sf::Vector2f offset, float zoom);
+    void renderComposite();
+    const sf::Texture& getCompositeTexture() const { return m_compositeTexture->getTexture(); }
+    void bakeLayerTransform(int index, std::unique_ptr<sf::Image> beforeImage);
+
     void clear(const sf::Color& color = sf::Color::White);
 
     bool saveToFile(const std::string& filename);
@@ -83,6 +92,8 @@ private:
     sf::Vector2u m_size;
     std::vector<std::unique_ptr<Layer>> m_layers;
     int m_activeLayerIndex = 0;
+    std::unique_ptr<sf::RenderTexture> m_compositeTexture;
+    std::unique_ptr<sf::RenderTexture> m_clippingTexture;
 
     UndoStack m_undoStack;
 

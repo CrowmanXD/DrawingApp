@@ -61,3 +61,40 @@ private:
     int m_oldMode;
     int m_newMode;
 };
+
+class DeleteLayerCommand : public UndoCommand {
+public:
+    DeleteLayerCommand(int startIndex, std::vector<std::unique_ptr<Layer>> savedLayers, int oldActiveIndex);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    int m_startIndex;
+    int m_count;
+    int m_oldActiveIndex;
+    std::vector<std::unique_ptr<Layer>> m_savedLayers;
+};
+
+class RenameLayerCommand : public UndoCommand {
+public:
+    RenameLayerCommand(int layerIndex, const std::string& oldName, const std::string& newName);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    int m_layerIndex;
+    std::string m_oldName;
+    std::string m_newName;
+};
+
+class ClipLayerCommand : public UndoCommand {
+public:
+    ClipLayerCommand(int layerIndex, bool oldState, bool newState);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    int m_layerIndex;
+    bool m_oldState;
+    bool m_newState;
+};
