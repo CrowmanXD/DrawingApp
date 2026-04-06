@@ -3,6 +3,10 @@
 
 class ClipboardHelper {
 public:
-    // Reads the OS clipboard and returns an image if one exists
     static sf::Image getImage();
+    static void setImage(const sf::Image& img);
+
+private:
+    static sf::Image s_internalClipboard;
+    static unsigned long s_lastSequenceNumber; // Matches the Windows DWORD type
 };

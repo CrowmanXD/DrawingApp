@@ -107,7 +107,6 @@ public:
 
     void setSelectionLive(bool live) { m_isSelectionLive = live; }
     bool isSelectionLive() const { return m_isSelectionLive; }
-
     void clearSelectionOnSelectedLayers(); // Deletes masked pixels across all active layers
 
     void beginBatchCommand();
@@ -121,6 +120,9 @@ public:
     void bakeLayerTransform(int index, std::unique_ptr<sf::Image> beforeImage);
 
     void clear(const sf::Color& color = sf::Color::White);
+
+    void copyToClipboard();
+    void cutToClipboard();
 
     void importFromImage(const sf::Image& image, const std::string& layerName = "Pasted Image");
     bool saveToFile(const std::string& filename);

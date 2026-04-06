@@ -1,6 +1,7 @@
 #include "Canvas.h"
 #include "StrokeUndoCommand.h"
 #include "LayerUndoCommands.h"
+#include "ClipboardHelper.h"
 
 Canvas::Canvas(sf::Vector2u size) : m_size(size) {
     m_compositeTexture = std::make_unique<sf::RenderTexture>(size);
@@ -653,6 +654,54 @@ void Canvas::bakeLayerTransform(int index, std::unique_ptr<sf::Image> beforeImag
 void Canvas::clear(const sf::Color& color) {
     getActiveTexture().clear(color);
     getActiveTexture().display();
+}
+
+void Canvas::copyToClipboard() {
+    sf::RenderTexture tempTex(m_size);
+    tempTex.clear(sf::Color(0, 0, 0, 0));
+
+    sf::RenderStates states(sf::BlendNone);
+
+    // If there is an active selection, mask the layer
+    if (m_hasSelection && sf::Shader::isAvailable()) {
+        try {
+            m_selectionShader.setUniform("baseTexture", getActiveTexture().getTexture());
+            m_selectionShader.setUniform("selectionMask", m_selectionTexture->getTexture());
+            states.shader = &m_selectionShader;
+        }
+        catch (...) {}
+    }
+
+    // Draw the current active layer into the temporary texture
+    tempTex.draw(sf::Sprite(getActiveTexture().getTexture()), states);
+    tempTex.display();
+
+    // Send it straight to the OS
+    ClipboardHelper::setImage(tempTex.getTexture().copyToImage());
+}
+
+void Canvas::cutToClipboard() {
+    // A Cut is just a Copy followed instantly by an Erase
+    copyToClipboard();
+
+    if (m_hasSelection) {
+        clearSelectionOnSelectedLayers();
+    }
+    else {
+        // If nothing is selected, clear the entire layer.
+        beginBatchCommand();
+        for (int sel : m_selectedLayers) {
+            if (m_layers[sel]->type == LayerType::Content) {
+                auto beforeImage = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+                m_layers[sel]->texture->clear(sf::Color(0, 0, 0, 0));
+                m_layers[sel]->texture->display();
+                auto afterImage = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+                pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(beforeImage), std::move(afterImage), sel));
+            }
+        }
+        endBatchCommand();
+        renderComposite();
+    }
 }
 
 void Canvas::clearSelectionOnSelectedLayers() {

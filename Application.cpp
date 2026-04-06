@@ -120,6 +120,13 @@ void Application::processEvents() {
                         m_canvas->importFromImage(clipboardImg, "Pasted Layer");
                     }
                 }
+                // --- COPY AND CUT SHORTCUTS ---
+                else if (key->control && key->code == sf::Keyboard::Key::C) {
+                    m_canvas->copyToClipboard();
+                }
+                else if (key->control && key->code == sf::Keyboard::Key::X) {
+                    m_canvas->cutToClipboard();
+                }
             }
 
             if (!m_imgui.wantsCaptureMouse()) {
