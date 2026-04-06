@@ -8,6 +8,43 @@ Canvas::Canvas(sf::Vector2u size) : m_size(size) {
     // Automatically create the first layer
     addLayer();
     m_layers[0]->name = "Background";
+    m_selectedLayers.insert(0);
+
+    m_selectionTexture = std::make_unique<sf::RenderTexture>(size);
+    m_selectionTexture->clear(sf::Color(0, 0, 0, 0));
+    // Compile the real-time brush clipping shader
+    const std::string fragShader = R"(
+        uniform sampler2D baseTexture;
+        uniform sampler2D selectionMask;
+        uniform vec2 canvasSize;
+
+        void main() {
+            vec4 pixel = gl_Color * texture2D(baseTexture, gl_TexCoord[0].xy);
+            vec2 maskUv = gl_FragCoord.xy / canvasSize;
+            vec4 mask = texture2D(selectionMask, maskUv);
+            
+            gl_FragColor = vec4(pixel.rgb, pixel.a * mask.a);
+        }
+    )";
+
+    if (sf::Shader::isAvailable()) {
+        // Only attempt to set uniforms IF the shader successfully compiled
+        // This permanently prevents the SFML 3 vector out-of-range crash.
+        if (m_selectionShader.loadFromMemory(fragShader, sf::Shader::Type::Fragment)) {
+            m_selectionShader.setUniform("canvasSize", sf::Vector2f(static_cast<float>(size.x), static_cast<float>(size.y)));
+        }
+    }
+}
+
+Canvas::~Canvas() = default;
+
+sf::BlendMode Canvas::getSfmlBlendMode(LayerBlendMode mode, bool isClipped) const {
+    if (isClipped) {
+        return sf::BlendMode(sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add);
+    }
+    if (mode == LayerBlendMode::Multiply) return sf::BlendMode(sf::BlendMode::Factor::DstColor, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
+    if (mode == LayerBlendMode::Add) return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add);
+    return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
 }
 
 void Canvas::addLayer() {
@@ -59,6 +96,8 @@ std::unique_ptr<Layer> Canvas::removeLayer(int index) {
     if (m_activeLayerIndex >= m_layers.size()) {
         m_activeLayerIndex = std::max(0, static_cast<int>(m_layers.size()) - 1);
     }
+
+    setActiveLayer(m_activeLayerIndex);
 
     return layer;
 }
@@ -197,20 +236,186 @@ void Canvas::deleteLayer(int index) {
         m_activeLayerIndex = std::max(0, std::min(startIndex, static_cast<int>(m_layers.size()) - 1));
     }
     else if (m_activeLayerIndex > endIndex) {
-        // The active layer shifted up to fill the gap!
+        // The active layer shifted up to fill the gap
         m_activeLayerIndex -= countToDelete;
     }
+
+    setActiveLayer(m_activeLayerIndex);
 
     pushUndoCommand(std::make_unique<DeleteLayerCommand>(startIndex, std::move(removedLayers), oldActive));
 }
 
-void Canvas::pushUndoCommand(std::unique_ptr<UndoCommand> cmd) {
-    m_undoStack.push(std::move(cmd));
+void Canvas::mergeDown(int index) {
+    if (index <= 0 || index >= m_layers.size()) return;
+
+    int targetIndex = index - 1;
+    auto& targetLayer = m_layers[targetIndex];
+    auto& sourceLayer = m_layers[index];
+
+    if (targetLayer->type != LayerType::Content || sourceLayer->type != LayerType::Content) return;
+
+    sf::RenderTexture mergedTex(m_size);
+    mergedTex.clear(sf::Color(0, 0, 0, 0));
+
+    sf::Sprite targetSprite(targetLayer->texture->getTexture());
+    targetSprite.setPosition(targetLayer->offset);
+    targetSprite.setScale(targetLayer->scale);
+    mergedTex.draw(targetSprite, sf::RenderStates(sf::BlendNone));
+
+    if (sourceLayer->visible) {
+        sf::Sprite sourceSprite(sourceLayer->texture->getTexture());
+        sourceSprite.setPosition(sourceLayer->offset);
+        sourceSprite.setScale(sourceLayer->scale);
+
+        std::uint8_t alpha = static_cast<std::uint8_t>(sourceLayer->opacity * 255.0f);
+        sourceSprite.setColor(sf::Color(alpha, alpha, alpha, alpha));
+        mergedTex.draw(sourceSprite, sf::RenderStates(getSfmlBlendMode(sourceLayer->blendMode, sourceLayer->isClipped)));
+    }
+    mergedTex.display();
+
+    auto mergedLayer = targetLayer->cloneMeta();
+    mergedLayer->offset = { 0.f, 0.f }; // Reset transform because it's already baked into the pixels
+    mergedLayer->scale = { 1.f, 1.f };
+    mergedLayer->texture->clear(sf::Color(0, 0, 0, 0));
+    mergedLayer->texture->draw(sf::Sprite(mergedTex.getTexture()), sf::RenderStates(sf::BlendNone));
+    mergedLayer->texture->display();
+
+    auto layerForCanvas = mergedLayer->cloneMeta();
+    layerForCanvas->texture->clear(sf::Color(0, 0, 0, 0));
+    layerForCanvas->texture->draw(sf::Sprite(mergedTex.getTexture()), sf::RenderStates(sf::BlendNone));
+    layerForCanvas->texture->display();
+
+    std::vector<std::unique_ptr<Layer>> extracted;
+    extracted.push_back(std::move(m_layers[targetIndex]));
+    extracted.push_back(std::move(m_layers[index]));
+
+    m_layers.erase(m_layers.begin() + targetIndex, m_layers.begin() + index + 1);
+    m_layers.insert(m_layers.begin() + targetIndex, std::move(layerForCanvas));
+    m_activeLayerIndex = targetIndex;
+
+    setActiveLayer(m_activeLayerIndex);
+
+    pushUndoCommand(std::make_unique<MergeLayerCommand>(targetIndex, 2, std::move(extracted), std::move(mergedLayer)));
+}
+
+void Canvas::mergeFolder(int index) {
+    if (index < 0 || index >= m_layers.size() || m_layers[index]->type != LayerType::Folder) return;
+
+    int originalDepth = m_layers[index]->depth;
+    int endIndex = index;
+    while (endIndex + 1 < m_layers.size() && m_layers[endIndex + 1]->depth > originalDepth) endIndex++;
+
+    int count = endIndex - index + 1;
+    if (count == 1) return;
+
+    std::vector<bool> visibilities(m_layers.size());
+    for (int i = 0; i < m_layers.size(); ++i) {
+        visibilities[i] = m_layers[i]->visible;
+        m_layers[i]->visible = false;
+    }
+
+    for (int i = index; i <= endIndex; ++i) {
+        m_layers[i]->visible = visibilities[i];
+        m_layers[i]->depth -= originalDepth;
+    }
+
+    LayerBlendMode oldBlend = m_layers[index]->blendMode;
+    float oldOp = m_layers[index]->opacity;
+    m_layers[index]->blendMode = LayerBlendMode::Normal;
+    m_layers[index]->opacity = 1.0f;
+
+    renderComposite();
+
+    auto mergedLayer = m_layers[index]->cloneMeta();
+    mergedLayer->type = LayerType::Content; // Tell the engine this is now a flattened image
+    mergedLayer->offset = { 0.f, 0.f };       // Reset transform because it's already baked into the pixels
+    mergedLayer->scale = { 1.f, 1.f };
+    mergedLayer->name = m_layers[index]->name + " (Merged)";
+    mergedLayer->opacity = oldOp;
+    mergedLayer->blendMode = (oldBlend == LayerBlendMode::PassThrough) ? LayerBlendMode::Normal : oldBlend;
+    mergedLayer->texture->clear(sf::Color(0, 0, 0, 0));
+    mergedLayer->texture->draw(sf::Sprite(m_compositeTexture->getTexture()), sf::RenderStates(sf::BlendNone));
+    mergedLayer->texture->display();
+
+    m_layers[index]->blendMode = oldBlend;
+    m_layers[index]->opacity = oldOp;
+    for (int i = 0; i < m_layers.size(); ++i) m_layers[i]->visible = visibilities[i];
+    for (int i = index; i <= endIndex; ++i) m_layers[i]->depth += originalDepth;
+
+    std::vector<std::unique_ptr<Layer>> extracted;
+    for (int i = 0; i < count; ++i) {
+        extracted.push_back(std::move(m_layers[index]));
+        m_layers.erase(m_layers.begin() + index);
+    }
+
+    auto layerForCanvas = mergedLayer->cloneMeta();
+    layerForCanvas->texture->clear(sf::Color(0, 0, 0, 0));
+    layerForCanvas->texture->draw(sf::Sprite(m_compositeTexture->getTexture()), sf::RenderStates(sf::BlendNone));
+    layerForCanvas->texture->display();
+
+    m_layers.insert(m_layers.begin() + index, std::move(layerForCanvas));
+    m_activeLayerIndex = index;
+
+    setActiveLayer(m_activeLayerIndex);
+
+    renderComposite();
+
+    pushUndoCommand(std::make_unique<MergeLayerCommand>(index, count, std::move(extracted), std::move(mergedLayer)));
 }
 
 void Canvas::setActiveLayer(int index) {
     if (index >= 0 && index < m_layers.size()) {
         m_activeLayerIndex = index;
+        m_selectedLayers.clear();
+        m_selectedLayers.insert(index);
+    }
+}
+
+void Canvas::toggleLayerSelection(int index, bool multiSelect) {
+    if (!multiSelect) {
+        m_selectedLayers.clear();
+        m_selectedLayers.insert(index);
+        m_activeLayerIndex = index;
+    }
+    else {
+        if (m_selectedLayers.count(index)) {
+            m_selectedLayers.erase(index);
+            // Ensure we always have an active anchor point
+            if (m_activeLayerIndex == index && !m_selectedLayers.empty()) {
+                m_activeLayerIndex = *m_selectedLayers.begin();
+            }
+            else if (m_selectedLayers.empty()) {
+                m_selectedLayers.insert(index); // Prevent de-selecting the very last layer
+            }
+        }
+        else {
+            m_selectedLayers.insert(index);
+            m_activeLayerIndex = index;
+        }
+    }
+}
+
+bool Canvas::isLayerSelected(int index) const {
+    return m_selectedLayers.count(index) > 0;
+}
+
+void Canvas::beginBatchCommand() {
+    m_activeBatch = std::make_unique<BatchCommand>();
+}
+
+void Canvas::endBatchCommand() {
+    if (m_activeBatch && !m_activeBatch->isEmpty()) {
+        m_undoStack.push(std::move(m_activeBatch));
+    }
+    m_activeBatch.reset();
+}
+
+void Canvas::pushUndoCommand(std::unique_ptr<UndoCommand> cmd) {
+    if (m_activeBatch) {
+        m_activeBatch->addCommand(std::move(cmd));
+    }
+    else {
+        m_undoStack.push(std::move(cmd));
     }
 }
 
@@ -242,13 +447,39 @@ void Canvas::endStroke() {
 
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
     if (!m_inStroke) return;
-    getActiveTexture().draw(drawable, sf::RenderStates(sf::BlendAlpha));
+
+    sf::RenderStates states(sf::BlendAlpha);
+
+    // Automatically clip the brush stroke to the selection mask
+    if (m_hasSelection && sf::Shader::isAvailable()) {
+        try {
+            m_selectionShader.setUniform("baseTexture", sf::Shader::CurrentTexture);
+            m_selectionShader.setUniform("selectionMask", m_selectionTexture->getTexture());
+            states.shader = &m_selectionShader;
+        }
+        catch (...) {}
+    }
+
+    getActiveTexture().draw(drawable, states);
     getActiveTexture().display();
 }
 
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states) {
     if (!m_inStroke) return;
-    getActiveTexture().draw(drawable, states);
+
+    sf::RenderStates finalStates = states;
+
+    // Automatically clip the brush stroke to the selection mask
+    if (m_hasSelection && sf::Shader::isAvailable()) {
+        try {
+            m_selectionShader.setUniform("baseTexture", sf::Shader::CurrentTexture);
+            m_selectionShader.setUniform("selectionMask", m_selectionTexture->getTexture());
+            finalStates.shader = &m_selectionShader;
+        }
+        catch (...) {}
+    }
+
+    getActiveTexture().draw(drawable, finalStates);
     getActiveTexture().display();
 }
 
@@ -293,18 +524,6 @@ void Canvas::renderComposite() {
     std::vector<RenderNode> stack;
     stack.push_back({ m_compositeTexture.get(), nullptr, 1.0f, true, {0.f, 0.f}, {1.f, 1.f} });
 
-    auto getBlendMode = [](LayerBlendMode mode) {
-        if (mode == LayerBlendMode::Multiply) return sf::BlendMode(sf::BlendMode::Factor::DstColor, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
-        if (mode == LayerBlendMode::Add) return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add);
-        return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
-        };
-
-    // The mathematical magic that allows clipping layers to only draw where the base layer exists!
-    sf::BlendMode clipBlendMode(
-        sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
-        sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
-    );
-
     auto drawSprite = [&](const sf::Texture& tex, sf::RenderTarget* destTarget, float opacity, sf::BlendMode blendMode, sf::Vector2f offset, sf::Vector2f scale) {
         if (opacity <= 0.0f) return;
         sf::Sprite sprite(tex);
@@ -317,46 +536,43 @@ void Canvas::renderComposite() {
 
     Layer* activeClippingBase = nullptr;
 
-    for (int i = 0; i < m_layers.size(); ++i) {
-        const auto& layer = m_layers[i];
-
-        // 1. If we are in a clipping group, but the next layer is NOT clipped, flush the clipping group!
-        if (activeClippingBase != nullptr && !layer->isClipped) {
+    // HELPER 1: Flush the clipping mask FBO to the main target
+    auto flushClippingBase = [&]() {
+        if (activeClippingBase != nullptr) {
             m_clippingTexture->display();
             float finalOp = activeClippingBase->opacity * stack.back().opacityMultiplier;
-            // The FBO represents the local folder space, so we only apply the accumulated folder offset!
             if (activeClippingBase->visible && stack.back().isVisible) {
-                drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp, getBlendMode(activeClippingBase->blendMode), stack.back().accumulatedOffset, stack.back().accumulatedScale);
+                drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp, getSfmlBlendMode(activeClippingBase->blendMode), stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
             activeClippingBase = nullptr;
         }
+        };
 
-        // 2. Pop closed folders
+    // HELPER 2: Render a standard layer using the stack math
+    auto drawLayerNode = [&](Layer* layerToDraw, float opacityMult, bool isVis, sf::Vector2f accOffset, sf::Vector2f accScale) {
+        float finalOp = layerToDraw->opacity * opacityMult;
+        sf::Vector2f finalOffset = accOffset + sf::Vector2f(layerToDraw->offset.x * accScale.x, layerToDraw->offset.y * accScale.y);
+        sf::Vector2f finalScale = { layerToDraw->scale.x * accScale.x, layerToDraw->scale.y * accScale.y };
+        if (layerToDraw->visible && isVis) {
+            drawSprite(layerToDraw->texture->getTexture(), stack.back().target, finalOp, getSfmlBlendMode(layerToDraw->blendMode), finalOffset, finalScale);
+        }
+        };
+
+    for (int i = 0; i < m_layers.size(); ++i) {
+        const auto& layer = m_layers[i];
+
+        if (activeClippingBase != nullptr && !layer->isClipped) flushClippingBase();
+
         while (stack.size() > layer->depth + 1) {
-            // Failsafe: Flush clipping group if it crosses a folder boundary
-            if (activeClippingBase != nullptr) {
-                m_clippingTexture->display();
-                float finalOp = activeClippingBase->opacity * stack.back().opacityMultiplier;
-                if (activeClippingBase->visible && stack.back().isVisible) {
-                    drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp, getBlendMode(activeClippingBase->blendMode), stack.back().accumulatedOffset, stack.back().accumulatedScale);
-                }
-                activeClippingBase = nullptr;
-            }
-
+            flushClippingBase();
             auto topNode = stack.back();
             stack.pop_back();
             if (topNode.layer && topNode.layer->blendMode != LayerBlendMode::PassThrough) {
                 topNode.layer->texture->display();
-                float finalOp = topNode.layer->opacity * stack.back().opacityMultiplier;
-                sf::Vector2f finalOffset = stack.back().accumulatedOffset + sf::Vector2f(topNode.layer->offset.x * stack.back().accumulatedScale.x, topNode.layer->offset.y * stack.back().accumulatedScale.y);
-                sf::Vector2f finalScale = { topNode.layer->scale.x * stack.back().accumulatedScale.x, topNode.layer->scale.y * stack.back().accumulatedScale.y };
-                if (topNode.layer->visible && stack.back().isVisible) {
-                    drawSprite(topNode.layer->texture->getTexture(), stack.back().target, finalOp, getBlendMode(topNode.layer->blendMode), finalOffset, finalScale);
-                }
+                drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
         }
 
-        // 3. Process Current Layer
         bool isBaseLayer = (!layer->isClipped && i + 1 < m_layers.size() && m_layers[i + 1]->isClipped && m_layers[i + 1]->depth == layer->depth);
 
         if (layer->type == LayerType::Folder) {
@@ -374,52 +590,27 @@ void Canvas::renderComposite() {
         }
         else {
             if (isBaseLayer) {
-                // Intercept rendering! Draw the base layer to the scratchpad FBO
                 m_clippingTexture->clear(sf::Color(0, 0, 0, 0));
                 activeClippingBase = layer.get();
-                if (layer->visible) {
-                    drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), 1.0f, getBlendMode(LayerBlendMode::Normal), layer->offset, layer->scale);
-                }
+                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), 1.0f, getSfmlBlendMode(LayerBlendMode::Normal), layer->offset, layer->scale);
             }
             else if (layer->isClipped && activeClippingBase != nullptr) {
-                // Intercept rendering! Draw the clipped layer to the scratchpad FBO with the mask blend mode
-                if (layer->visible) {
-                    drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity, clipBlendMode, layer->offset, layer->scale);
-                }
+                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity, getSfmlBlendMode(LayerBlendMode::Normal, true), layer->offset, layer->scale);
             }
             else {
-                // Normal Layer execution
-                float finalOp = layer->opacity * stack.back().opacityMultiplier;
-                sf::Vector2f finalOffset = stack.back().accumulatedOffset + sf::Vector2f(layer->offset.x * stack.back().accumulatedScale.x, layer->offset.y * stack.back().accumulatedScale.y);
-                sf::Vector2f finalScale = { layer->scale.x * stack.back().accumulatedScale.x, layer->scale.y * stack.back().accumulatedScale.y };
-                if (layer->visible && stack.back().isVisible) {
-                    drawSprite(layer->texture->getTexture(), stack.back().target, finalOp, getBlendMode(layer->blendMode), finalOffset, finalScale);
-                }
+                drawLayerNode(layer.get(), stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
         }
     }
 
-    // 4. Flush the final clipping group if it was the last layer in the list
-    if (activeClippingBase != nullptr) {
-        m_clippingTexture->display();
-        float finalOp = activeClippingBase->opacity * stack.back().opacityMultiplier;
-        if (activeClippingBase->visible && stack.back().isVisible) {
-            drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp, getBlendMode(activeClippingBase->blendMode), stack.back().accumulatedOffset, stack.back().accumulatedScale);
-        }
-    }
+    flushClippingBase();
 
-    // 5. Flush remaining isolated folders
     while (stack.size() > 1) {
         auto topNode = stack.back();
         stack.pop_back();
         if (topNode.layer && topNode.layer->blendMode != LayerBlendMode::PassThrough) {
             topNode.layer->texture->display();
-            float finalOp = topNode.layer->opacity * stack.back().opacityMultiplier;
-            sf::Vector2f finalOffset = stack.back().accumulatedOffset + sf::Vector2f(topNode.layer->offset.x * stack.back().accumulatedScale.x, topNode.layer->offset.y * stack.back().accumulatedScale.y);
-            sf::Vector2f finalScale = { topNode.layer->scale.x * stack.back().accumulatedScale.x, topNode.layer->scale.y * stack.back().accumulatedScale.y };
-            if (topNode.layer->visible && stack.back().isVisible) {
-                drawSprite(topNode.layer->texture->getTexture(), stack.back().target, finalOp, getBlendMode(topNode.layer->blendMode), finalOffset, finalScale);
-            }
+            drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
         }
     }
 
@@ -464,28 +655,59 @@ void Canvas::clear(const sf::Color& color) {
     getActiveTexture().display();
 }
 
+void Canvas::clearSelectionOnSelectedLayers() {
+    if (!m_hasSelection) return;
+
+    beginBatchCommand();
+
+    // Mathematically subtracts destination alpha wherever the mask alpha is 1
+    sf::BlendMode eraseMode(
+        sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+        sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+    );
+
+    sf::Sprite maskSprite(m_selectionTexture->getTexture());
+
+    for (int sel : m_selectedLayers) {
+        if (sel >= 0 && sel < m_layers.size() && m_layers[sel]->type == LayerType::Content) {
+            auto beforeImage = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+
+            m_layers[sel]->texture->draw(maskSprite, sf::RenderStates(eraseMode));
+            m_layers[sel]->texture->display();
+
+            auto afterImage = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+            pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(beforeImage), std::move(afterImage), sel));
+        }
+    }
+
+    endBatchCommand();
+    renderComposite(); // Force a fresh composite so the screen updates instantly
+}
+
+void Canvas::importFromImage(const sf::Image& image, const std::string& layerName) {
+    if (image.getSize().x == 0 || image.getSize().y == 0) return;
+
+    sf::Texture loadedTex;
+    if (!loadedTex.loadFromImage(image)) return;
+
+    addLayer();
+    auto& activeLayer = m_layers[m_activeLayerIndex];
+    activeLayer->name = layerName;
+
+    activeLayer->texture->clear(sf::Color(0, 0, 0, 0));
+    activeLayer->texture->draw(sf::Sprite(loadedTex), sf::RenderStates(sf::BlendNone));
+    activeLayer->texture->display();
+}
+
 bool Canvas::saveToFile(const std::string& filename) {
     renderComposite();
     return m_compositeTexture->getTexture().copyToImage().saveToFile(filename);
 }
 
 bool Canvas::loadFromFile(const std::string& filename) {
-    sf::Texture loadedTex;
-    if (!loadedTex.loadFromFile(filename)) return false;
+    sf::Image loadedImg;
+    if (!loadedImg.loadFromFile(filename)) return false;
 
-    // 1. Create a brand new layer to hold the imported image
-    addLayer();
-    
-    // addLayer() automatically updates m_activeLayerIndex to the newly created layer
-    auto& activeLayer = m_layers[m_activeLayerIndex];
-    activeLayer->name = "Imported Image";
-
-    // 2. Draw the loaded image exactly as it is onto the new layer
-    activeLayer->texture->clear(sf::Color(0, 0, 0, 0));
-    
-    // We use sf::BlendNone so it perfectly copies the image's transparency without mixing!
-    activeLayer->texture->draw(sf::Sprite(loadedTex), sf::RenderStates(sf::BlendNone));
-    activeLayer->texture->display();
-
+    importFromImage(loadedImg, "Imported Image");
     return true;
 }

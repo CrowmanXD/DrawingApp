@@ -144,3 +144,58 @@ void ClipLayerCommand::redo(Canvas& canvas) {
         canvas.getLayers()[m_layerIndex]->isClipped = m_newState;
     }
 }
+
+// --- MERGE LAYER COMMAND ---
+MergeLayerCommand::MergeLayerCommand(int startIndex, int count, std::vector<std::unique_ptr<Layer>> originalLayers, std::unique_ptr<Layer> mergedLayer)
+    : m_startIndex(startIndex), m_count(count), m_originalLayers(std::move(originalLayers)), m_mergedLayer(std::move(mergedLayer)) {
+}
+
+void MergeLayerCommand::undo(Canvas& canvas) {
+    auto& layers = canvas.getLayers();
+    if (m_startIndex < layers.size()) {
+        // Pull the merged layer off the canvas and hold it in memory
+        m_mergedLayer = std::move(layers[m_startIndex]);
+        layers.erase(layers.begin() + m_startIndex);
+    }
+    // Re-insert the original layers back onto the canvas
+    for (int i = 0; i < m_count; ++i) {
+        layers.insert(layers.begin() + m_startIndex + i, std::move(m_originalLayers[i]));
+    }
+    m_originalLayers.clear();
+    canvas.setActiveLayer(m_startIndex);
+}
+
+void MergeLayerCommand::redo(Canvas& canvas) {
+    auto& layers = canvas.getLayers();
+    // Scoop the original layers back into the command
+    for (int i = 0; i < m_count; ++i) {
+        m_originalLayers.push_back(std::move(layers[m_startIndex]));
+        layers.erase(layers.begin() + m_startIndex);
+    }
+    // Drop the merged layer back onto the canvas
+    layers.insert(layers.begin() + m_startIndex, std::move(m_mergedLayer));
+    canvas.setActiveLayer(m_startIndex);
+}
+
+// --- BATCH COMMAND ---
+void BatchCommand::addCommand(std::unique_ptr<UndoCommand> cmd) {
+    m_commands.push_back(std::move(cmd));
+}
+
+void BatchCommand::undo(Canvas& canvas) {
+    // Undo must execute in reverse order
+    for (auto it = m_commands.rbegin(); it != m_commands.rend(); ++it) {
+        (*it)->undo(canvas);
+    }
+}
+
+void BatchCommand::redo(Canvas& canvas) {
+    // Redo executes in standard forward order
+    for (auto& cmd : m_commands) {
+        cmd->redo(canvas);
+    }
+}
+
+bool BatchCommand::isEmpty() const {
+    return m_commands.empty();
+}

@@ -3,10 +3,12 @@
 #include <SFML/Graphics.hpp>
 #include "ImGuiLayer.h"
 #include "Canvas.h"
-#include <memory>
 #include "Tool.h"
 #include "BrushTool.h"
 #include "AppState.h"
+#include "RectSelectTool.h"
+#include "SelectionBrushTool.h"
+#include <memory>
 
 class Application {
 public:
@@ -32,6 +34,8 @@ public:
     void setBrushSoftness(float softness);
     bool isEraser() const;
     void setEraser(bool isEraser);
+    void setToolMode(int mode);
+    int getToolMode() const;
 
     sf::Vector2f getCanvasOffset() const;
     sf::Vector2u getWindowSize() const;
@@ -47,11 +51,18 @@ private:
     bool m_isPanning = false;
     sf::Vector2i m_lastMousePos;
 
+    sf::Shader m_antsShader;
+    sf::Clock m_antsClock;
+
     sf::RenderWindow m_window;
     bool m_running = true;
     ImGuiLayer m_imgui;
     AppState m_state = AppState::StartupScreen;
     std::unique_ptr<Canvas> m_canvas;
-    std::unique_ptr<BrushTool> m_activeTool;
+    BrushTool m_brushTool;
+    RectSelectTool m_rectSelectTool;
+    SelectionBrushTool m_selectionBrushTool;
+    Tool* m_activeTool = nullptr;
+    int m_currentToolMode = 0; // 0 = Brush, 1 = Select
 };
 

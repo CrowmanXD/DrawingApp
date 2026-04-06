@@ -98,3 +98,28 @@ private:
     bool m_oldState;
     bool m_newState;
 };
+
+class MergeLayerCommand : public UndoCommand {
+public:
+    MergeLayerCommand(int startIndex, int count, std::vector<std::unique_ptr<Layer>> originalLayers, std::unique_ptr<Layer> mergedLayer);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    int m_startIndex;
+    int m_count;
+    std::vector<std::unique_ptr<Layer>> m_originalLayers;
+    std::unique_ptr<Layer> m_mergedLayer;
+};
+
+class BatchCommand : public UndoCommand {
+public:
+    BatchCommand() = default;
+    void addCommand(std::unique_ptr<UndoCommand> cmd);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+    bool isEmpty() const;
+
+private:
+    std::vector<std::unique_ptr<UndoCommand>> m_commands;
+};
