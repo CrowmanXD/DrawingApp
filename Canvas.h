@@ -127,6 +127,8 @@ public:
     void importFromImage(const sf::Image& image, const std::string& layerName = "Pasted Image");
     bool saveToFile(const std::string& filename);
     bool loadFromFile(const std::string& filename);
+    bool saveProject(const std::string& filename);
+    bool loadProject(const std::string& filename);
 
 private:
     sf::Vector2u m_size;

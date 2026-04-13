@@ -3,6 +3,9 @@
 #include "LayerUndoCommands.h"
 #include "ClipboardHelper.h"
 
+#include <fstream>
+#include <cstring>
+
 Canvas::Canvas(sf::Vector2u size) : m_size(size) {
     m_compositeTexture = std::make_unique<sf::RenderTexture>(size);
     m_clippingTexture = std::make_unique<sf::RenderTexture>(size);
@@ -758,5 +761,159 @@ bool Canvas::loadFromFile(const std::string& filename) {
     if (!loadedImg.loadFromFile(filename)) return false;
 
     importFromImage(loadedImg, "Imported Image");
+    return true;
+}
+
+bool Canvas::saveProject(const std::string& filename) {
+    std::ofstream file(filename, std::ios::binary);
+    if (!file) return false;
+
+    // 1. Write the "Magic Signature" to identify the file format
+    file.write("LAYR", 4);
+
+    // 2. Write Canvas Dimensions
+    file.write(reinterpret_cast<const char*>(&m_size.x), sizeof(m_size.x));
+    file.write(reinterpret_cast<const char*>(&m_size.y), sizeof(m_size.y));
+
+    // 3. Write Total Layer Count
+    uint32_t layerCount = static_cast<uint32_t>(m_layers.size());
+    file.write(reinterpret_cast<const char*>(&layerCount), sizeof(layerCount));
+
+    // 4. Serialize every layer perfectly
+    for (const auto& layer : m_layers) {
+        // Name
+        uint32_t nameLen = static_cast<uint32_t>(layer->name.size());
+        file.write(reinterpret_cast<const char*>(&nameLen), sizeof(nameLen));
+        file.write(layer->name.c_str(), nameLen);
+
+        // Types and Bools
+        uint8_t typeInt = static_cast<uint8_t>(layer->type);
+        file.write(reinterpret_cast<const char*>(&typeInt), sizeof(typeInt));
+
+        uint8_t vis = layer->visible ? 1 : 0;
+        uint8_t lock = layer->alphaLocked ? 1 : 0;
+        uint8_t clip = layer->isClipped ? 1 : 0;
+        file.write(reinterpret_cast<const char*>(&vis), sizeof(vis));
+        file.write(reinterpret_cast<const char*>(&lock), sizeof(lock));
+        file.write(reinterpret_cast<const char*>(&clip), sizeof(clip));
+
+        // Blend Math
+        file.write(reinterpret_cast<const char*>(&layer->opacity), sizeof(layer->opacity));
+        uint8_t blend = static_cast<uint8_t>(layer->blendMode);
+        file.write(reinterpret_cast<const char*>(&blend), sizeof(blend));
+
+        // Transforms & Hierarchy
+        file.write(reinterpret_cast<const char*>(&layer->depth), sizeof(layer->depth));
+        file.write(reinterpret_cast<const char*>(&layer->offset.x), sizeof(layer->offset.x));
+        file.write(reinterpret_cast<const char*>(&layer->offset.y), sizeof(layer->offset.y));
+        file.write(reinterpret_cast<const char*>(&layer->scale.x), sizeof(layer->scale.x));
+        file.write(reinterpret_cast<const char*>(&layer->scale.y), sizeof(layer->scale.y));
+
+        // 5. If it's an image layer, dump the raw 32-bit RGBA pixel array straight to disk
+        if (layer->type == LayerType::Content) {
+            sf::Image img = layer->texture->getTexture().copyToImage();
+            const std::uint8_t* pixels = img.getPixelsPtr();
+            size_t pixelDataSize = static_cast<size_t>(m_size.x) * m_size.y * 4;
+            file.write(reinterpret_cast<const char*>(pixels), pixelDataSize);
+        }
+    }
+    return true;
+}
+
+bool Canvas::loadProject(const std::string& filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file) return false;
+
+    // 1. Check the Magic Signature
+    char magic[4];
+    file.read(magic, 4);
+    if (std::strncmp(magic, "LAYR", 4) != 0) return false;
+
+    // 2. Read Canvas Dimensions
+    sf::Vector2u newSize;
+    file.read(reinterpret_cast<char*>(&newSize.x), sizeof(newSize.x));
+    file.read(reinterpret_cast<char*>(&newSize.y), sizeof(newSize.y));
+
+    uint32_t layerCount;
+    file.read(reinterpret_cast<char*>(&layerCount), sizeof(layerCount));
+
+    // 3. Reset the entire canvas environment to adapt to the new project
+    m_size = newSize;
+    m_layers.clear();
+    m_selectedLayers.clear();
+    m_activeLayerIndex = 0;
+    setSelectionActive(false);
+    setSelectionLive(false);
+
+    // Reallocate internal textures for the new size
+    m_compositeTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_clippingTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture->clear(sf::Color(0, 0, 0, 0));
+
+    // Recompile the mask shader for the new resolution
+    if (sf::Shader::isAvailable()) {
+        try { m_selectionShader.setUniform("canvasSize", sf::Vector2f(static_cast<float>(m_size.x), static_cast<float>(m_size.y))); }
+        catch (...) {}
+    }
+
+    // 4. Rebuild the layers from the binary data
+    for (uint32_t i = 0; i < layerCount; ++i) {
+        uint32_t nameLen;
+        file.read(reinterpret_cast<char*>(&nameLen), sizeof(nameLen));
+        std::string name(nameLen, '\0');
+        file.read(&name[0], nameLen);
+
+        uint8_t typeInt;
+        file.read(reinterpret_cast<char*>(&typeInt), sizeof(typeInt));
+        LayerType type = static_cast<LayerType>(typeInt);
+
+        auto layer = std::make_unique<Layer>(m_size, name, type);
+
+        uint8_t vis, lock, clip;
+        file.read(reinterpret_cast<char*>(&vis), sizeof(vis));
+        file.read(reinterpret_cast<char*>(&lock), sizeof(lock));
+        file.read(reinterpret_cast<char*>(&clip), sizeof(clip));
+        layer->visible = (vis != 0);
+        layer->alphaLocked = (lock != 0);
+        layer->isClipped = (clip != 0);
+
+        file.read(reinterpret_cast<char*>(&layer->opacity), sizeof(layer->opacity));
+
+        uint8_t blend;
+        file.read(reinterpret_cast<char*>(&blend), sizeof(blend));
+        layer->blendMode = static_cast<LayerBlendMode>(blend);
+
+        file.read(reinterpret_cast<char*>(&layer->depth), sizeof(layer->depth));
+        file.read(reinterpret_cast<char*>(&layer->offset.x), sizeof(layer->offset.x));
+        file.read(reinterpret_cast<char*>(&layer->offset.y), sizeof(layer->offset.y));
+        file.read(reinterpret_cast<char*>(&layer->scale.x), sizeof(layer->scale.x));
+        file.read(reinterpret_cast<char*>(&layer->scale.y), sizeof(layer->scale.y));
+
+        if (type == LayerType::Content) {
+            size_t pixelDataSize = static_cast<size_t>(m_size.x) * m_size.y * 4;
+            std::vector<std::uint8_t> pixels(pixelDataSize);
+            file.read(reinterpret_cast<char*>(pixels.data()), pixelDataSize);
+
+            // Rebuild the SFML texture using the raw pixels
+            sf::Image img;
+            img.resize(m_size, pixels.data());
+
+            sf::Texture tex;
+            tex.loadFromImage(img);
+            layer->texture->clear(sf::Color(0, 0, 0, 0));
+            layer->texture->draw(sf::Sprite(tex), sf::RenderStates(sf::BlendNone));
+            layer->texture->display();
+        }
+
+        m_layers.push_back(std::move(layer));
+    }
+
+    setActiveLayer(0);
+    renderComposite();
+
+    // Purge the undo stack so it doesn't try to apply old commands to the new file
+    m_undoStack = UndoStack();
+
     return true;
 }

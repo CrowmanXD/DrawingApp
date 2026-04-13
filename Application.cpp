@@ -82,8 +82,11 @@ sf::Vector2f Application::getCanvasOffset() const {
 // This is called by the UI when you click "Create"
 void Application::startDrawing(unsigned int width, unsigned int height) {
     m_canvas = std::make_unique<Canvas>(sf::Vector2u(width, height));
+
     // Clear the new canvas to transparent white to avoid dark halos
     m_canvas->clear(sf::Color(255, 255, 255, 0));
+
+    m_assistant = std::make_unique<AssistantController>(*m_canvas);
     m_state = AppState::DrawingEditor;
 }
 

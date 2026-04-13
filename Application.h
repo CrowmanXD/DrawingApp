@@ -8,6 +8,7 @@
 #include "AppState.h"
 #include "RectSelectTool.h"
 #include "SelectionBrushTool.h"
+#include "AssistantController.h"
 #include <memory>
 
 class Application {
@@ -41,6 +42,18 @@ public:
     sf::Vector2u getWindowSize() const;
     Canvas& getCanvas() const;
 
+    // --- AI ASSISTANT ---
+    bool isAssistantEnabled() const { return m_assistantEnabled; }
+    void setAssistantEnabled(bool enabled) { m_assistantEnabled = enabled; }
+
+    int getAssistantMode() const { return m_assistantMode; }
+    void setAssistantMode(int mode) { m_assistantMode = mode; }
+
+    bool isAssistantPreviewOnly() const { return m_assistantPreviewOnly; }
+    void setAssistantPreviewOnly(bool preview) { m_assistantPreviewOnly = preview; }
+
+    AssistantController* getAssistant() const { return m_assistant.get(); }
+
 private:
     void processEvents();
     void update(sf::Time deltaTime);
@@ -64,5 +77,10 @@ private:
     SelectionBrushTool m_selectionBrushTool;
     Tool* m_activeTool = nullptr;
     int m_currentToolMode = 0; // 0 = Brush, 1 = Select
+
+    std::unique_ptr<AssistantController> m_assistant;
+    bool m_assistantEnabled = false;
+    int m_assistantMode = 0; // 0 = Chat, 1 = Auto-Draw, 2 = Smart Select
+    bool m_assistantPreviewOnly = true; // Default to safe preview mode!
 };
 

@@ -72,7 +72,6 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
         static int layerToMergeDown = -1;
         static int folderToMerge = -1;
-        // -----------------------------
 
         // --- BRUSH SETTINGS SIDEBAR ---
         ImGui::SetNextWindowPos(ImVec2(0, 0), ImGuiCond_Always);
@@ -132,6 +131,15 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::Text("File Management");
         ImGui::Spacing();
 
+        if (ImGui::Button("Save Project...", ImVec2(130, 0))) {
+            std::string filepath = FileDialogs::saveFile("Drawing Project (*.drw)\0*.drw\0Any File\0*.*\0");
+            if (!filepath.empty()) app.getCanvas().saveProject(filepath);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Open Project...", ImVec2(130, 0))) {
+            std::string filepath = FileDialogs::openFile("Drawing Project (*.drw)\0*.drw\0Any File\0*.*\0");
+            if (!filepath.empty()) app.getCanvas().loadProject(filepath);
+        }
         if (ImGui::Button("Save As...", ImVec2(130, 0))) {
             std::string filepath = FileDialogs::saveFile("PNG Image (*.png)\0*.png\0Any File\0*.*\0");
             if (!filepath.empty()) app.getCanvas().saveToFile(filepath);
@@ -195,6 +203,33 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
         ImGui::EndDisabled();
         ImGui::PopItemWidth();
+
+        // --- AI ASSISTANT PANEL ---
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "AI Co-Pilot"); // Give it a cool blue color!
+        ImGui::Spacing();
+
+        bool aiEnabled = app.isAssistantEnabled();
+        if (ImGui::Checkbox("Enable Assistant", &aiEnabled)) app.setAssistantEnabled(aiEnabled);
+
+        ImGui::BeginDisabled(!aiEnabled);
+
+        int aiMode = app.getAssistantMode();
+        if (ImGui::Combo("Mode", &aiMode, "Chat & Suggest\0Auto-Draw\0Smart Select\0")) app.setAssistantMode(aiMode);
+
+        bool aiPreview = app.isAssistantPreviewOnly();
+        if (ImGui::Checkbox("Preview Only (Safe Mode)", &aiPreview)) app.setAssistantPreviewOnly(aiPreview);
+
+        ImGui::Spacing();
+        if (ImGui::Button("Test AI Layer Suggestion", ImVec2(-1, 0))) {
+            if (app.getAssistant()) {
+                // Emulate the AI deciding to create a new layer for lineart
+                app.getAssistant()->suggestLayer("Sketch Lineart");
+            }
+        }
+
+        ImGui::EndDisabled();
+        ImGui::Spacing();
 
         // --- LAYERS PANEL ---
         ImGui::Separator();
