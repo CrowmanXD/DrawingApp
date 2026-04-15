@@ -206,7 +206,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
         // --- AI ASSISTANT PANEL ---
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "AI Co-Pilot"); // Give it a cool blue color!
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "AI Co-Pilot");
         ImGui::Spacing();
 
         bool aiEnabled = app.isAssistantEnabled();
@@ -221,11 +221,26 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         if (ImGui::Checkbox("Preview Only (Safe Mode)", &aiPreview)) app.setAssistantPreviewOnly(aiPreview);
 
         ImGui::Spacing();
-        if (ImGui::Button("Test AI Layer Suggestion", ImVec2(-1, 0))) {
-            if (app.getAssistant()) {
-                // Emulate the AI deciding to create a new layer for lineart
-                app.getAssistant()->suggestLayer("Sketch Lineart");
+
+        // --- ASYNC UI STATUS ---
+        if (app.getAssistant()) {
+            AssistantState state = app.getAssistant()->getState();
+
+            if (state == AssistantState::Thinking) {
+                // Show yellow thinking text
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "AI is thinking...");
             }
+            else if (state == AssistantState::Error) {
+                // Show red error text
+                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Error: %s", app.getAssistant()->getLastError().c_str());
+            }
+
+            // Lock the button while the background thread is running!
+            ImGui::BeginDisabled(state == AssistantState::Thinking);
+            if (ImGui::Button("Ask AI to generate layer", ImVec2(-1, 0))) {
+                app.getAssistant()->requestAIHelp("I need a new layer for sketching.");
+            }
+            ImGui::EndDisabled();
         }
 
         ImGui::EndDisabled();

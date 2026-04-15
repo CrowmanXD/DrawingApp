@@ -2,27 +2,65 @@
 #include "Canvas.h"
 #include <memory>
 #include <string>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <vector>
+#include <variant>
 
-// The generic interface for whatever AI backend you eventually plug in (OpenAI, Local LLM, etc.)
+// --- GAP 6: ERROR & STATE REPORTING ---
+enum class AssistantState {
+    Idle,
+    Thinking,
+    Applying,
+    Error
+};
+
+// --- GAP 3: TYPED ACTION CONTRACT ---
+// These DTOs contain pure data. No rendering logic allowed here.
+struct AddLayerAction { std::string name; };
+struct DeleteLayerAction { int targetIndex; };
+struct StrokeAction { std::vector<sf::Vector2f> points; float size; sf::Color color; };
+
+// A strict variant holding only approved operations
+using AIOperation = std::variant<AddLayerAction, DeleteLayerAction, StrokeAction>;
+
 class IAssistant {
 public:
     virtual ~IAssistant() = default;
-    virtual void processContext(const Canvas& canvas) = 0;
+    // Returns a list of strictly typed actions, or throws an exception on network failure
+    virtual std::vector<AIOperation> requestAction(const Canvas& currentContext, const std::string& userPrompt) = 0;
 };
 
-// The bridge that translates AI decisions into standard Canvas commands
+// --- GAP 4: ASYNC EXECUTION MODEL ---
 class AssistantController {
 public:
     explicit AssistantController(Canvas& canvas);
+    ~AssistantController();
 
     void setBackend(std::unique_ptr<IAssistant> backend) { m_backend = std::move(backend); }
 
-    // --- HIGH-LEVEL ACTIONS (Emitted by the AI) ---
-    void suggestLayer(const std::string& name);
-    void applyStroke(/* parameters will go here */);
-    void autoSelectRegion(/* parameters will go here */);
+    // Thread-safe state access for ImGui
+    AssistantState getState() const;
+    std::string getLastError() const;
+
+    // Kicks off the background thread
+    void requestAIHelp(const std::string& prompt);
+
+    // Called every frame by Application::update() to safely process finished AI tasks on the MAIN thread
+    void processPendingActions(bool previewOnly); // Gap 5: Enforce preview boundary here
 
 private:
     Canvas& m_canvas;
     std::unique_ptr<IAssistant> m_backend;
+
+    // Async machinery
+    std::thread m_workerThread;
+    std::atomic<AssistantState> m_state{ AssistantState::Idle };
+
+    mutable std::mutex m_mutex;
+    std::string m_lastError;
+    std::vector<AIOperation> m_pendingOperations;
+
+    void executeAction(const AIOperation& op, bool previewOnly);
 };

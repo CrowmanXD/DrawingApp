@@ -1,5 +1,6 @@
 #include "Application.h"
 #include "ClipboardHelper.h"
+#include "MockAssistant.h"
 
 Application::Application()
     : m_window(
@@ -87,6 +88,9 @@ void Application::startDrawing(unsigned int width, unsigned int height) {
     m_canvas->clear(sf::Color(255, 255, 255, 0));
 
     m_assistant = std::make_unique<AssistantController>(*m_canvas);
+
+    //Attach the mock backend
+    m_assistant->setBackend(std::make_unique<MockAssistant>());
     m_state = AppState::DrawingEditor;
 }
 
@@ -211,6 +215,11 @@ void Application::processEvents() {
 
 void Application::update(sf::Time deltaTime) {
     m_imgui.update(m_window, deltaTime, *this);
+
+    // Process any finished AI tasks safely on the main thread
+    if (m_assistant && m_assistantEnabled) {
+        m_assistant->processPendingActions(m_assistantPreviewOnly);
+    }
 }
 
 void Application::render() {
