@@ -82,6 +82,7 @@ public:
     void setActiveLayer(int index);
     int getActiveLayerIndex() const { return m_activeLayerIndex; }
     std::vector<std::unique_ptr<Layer>>& getLayers() { return m_layers; }
+    const std::vector<std::unique_ptr<Layer>>& getLayers() const { return m_layers; }
     std::unique_ptr<Layer> removeLayer(int index);
     void insertLayer(int index, std::unique_ptr<Layer> layer);
     void pushUndoCommand(std::unique_ptr<UndoCommand> cmd);
@@ -96,6 +97,9 @@ public:
     const std::set<int>& getSelectedLayers() const { return m_selectedLayers; }
     void addFolder();
     Layer* getActiveLayer() const { return m_layers[m_activeLayerIndex].get(); }
+    void setLayerName(int index, const std::string& newName);
+    void setLayerOpacity(int index, float newOpacity);
+    void setLayerVisibility(int index, bool isVisible);
 
     // --- SELECTION MASK METHODS ---
     void setSelectionActive(bool active) { m_hasSelection = active; }

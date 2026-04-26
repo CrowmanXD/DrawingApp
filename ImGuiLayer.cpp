@@ -204,7 +204,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::EndDisabled();
         ImGui::PopItemWidth();
 
-        // --- AI ASSISTANT PANEL ---
+        // --- AI ASSISTANT CHAT UI ---
         ImGui::Separator();
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "AI Co-Pilot");
         ImGui::Spacing();
@@ -212,38 +212,51 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         bool aiEnabled = app.isAssistantEnabled();
         if (ImGui::Checkbox("Enable Assistant", &aiEnabled)) app.setAssistantEnabled(aiEnabled);
 
-        ImGui::BeginDisabled(!aiEnabled);
-
-        int aiMode = app.getAssistantMode();
-        if (ImGui::Combo("Mode", &aiMode, "Chat & Suggest\0Auto-Draw\0Smart Select\0")) app.setAssistantMode(aiMode);
-
-        bool aiPreview = app.isAssistantPreviewOnly();
-        if (ImGui::Checkbox("Preview Only (Safe Mode)", &aiPreview)) app.setAssistantPreviewOnly(aiPreview);
-
-        ImGui::Spacing();
-
-        // --- ASYNC UI STATUS ---
-        if (app.getAssistant()) {
+        if (aiEnabled && app.getAssistant()) {
             AssistantState state = app.getAssistant()->getState();
 
+            // 1. Chat History Box
+            ImGui::BeginChild("ChatHistory", ImVec2(0, 150), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+            for (const auto& msg : app.getAssistant()->getChatHistory()) {
+                if (msg.sender == "You") {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "You:");
+                    ImGui::TextWrapped("%s", msg.text.c_str());
+                }
+                else {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "AI:");
+                    ImGui::TextWrapped("%s", msg.text.c_str());
+                }
+                ImGui::Separator();
+            }
+
             if (state == AssistantState::Thinking) {
-                // Show yellow thinking text
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "AI is thinking...");
+                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "AI is typing...");
             }
             else if (state == AssistantState::Error) {
-                // Show red error text
                 ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Error: %s", app.getAssistant()->getLastError().c_str());
             }
 
-            // Lock the button while the background thread is running!
+            // Auto-scroll to the bottom of the chat
+            if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) ImGui::SetScrollHereY(1.0f);
+            ImGui::EndChild();
+
+            // 2. Chat Input Box
+            static char chatInput[256] = "";
             ImGui::BeginDisabled(state == AssistantState::Thinking);
-            if (ImGui::Button("Ask AI to generate layer", ImVec2(-1, 0))) {
-                app.getAssistant()->requestAIHelp("I need a new layer for sketching.");
+
+            ImGui::PushItemWidth(-50.0f);
+            bool enterPressed = ImGui::InputText("##ChatInput", chatInput, sizeof(chatInput), ImGuiInputTextFlags_EnterReturnsTrue);
+            ImGui::PopItemWidth();
+
+            ImGui::SameLine();
+            if ((ImGui::Button("Send", ImVec2(-1, 0)) || enterPressed) && strlen(chatInput) > 0) {
+                app.getAssistant()->requestAIHelp(chatInput);
+                chatInput[0] = '\0'; // Clear the text box
+                ImGui::SetKeyboardFocusHere(-1); // Keep focus on the text box
             }
             ImGui::EndDisabled();
         }
 
-        ImGui::EndDisabled();
         ImGui::Spacing();
 
         // --- LAYERS PANEL ---

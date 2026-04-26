@@ -403,6 +403,25 @@ bool Canvas::isLayerSelected(int index) const {
     return m_selectedLayers.count(index) > 0;
 }
 
+void Canvas::setLayerName(int index, const std::string& newName) {
+    if (index >= 0 && index < m_layers.size()) {
+        m_layers[index]->name = newName;
+        // You could trigger UI updates or layer re-renders here
+    }
+}
+
+void Canvas::setLayerOpacity(int index, float newOpacity) {
+    if (index >= 0 && index < m_layers.size()) {
+        m_layers[index]->opacity = std::clamp(newOpacity, 0.0f, 1.0f);
+    }
+}
+
+void Canvas::setLayerVisibility(int index, bool isVisible) {
+    if (index >= 0 && index < m_layers.size()) {
+        m_layers[index]->visible = isVisible;
+    }
+}
+
 void Canvas::beginBatchCommand() {
     m_activeBatch = std::make_unique<BatchCommand>();
 }
@@ -779,7 +798,7 @@ bool Canvas::saveProject(const std::string& filename) {
     uint32_t layerCount = static_cast<uint32_t>(m_layers.size());
     file.write(reinterpret_cast<const char*>(&layerCount), sizeof(layerCount));
 
-    // 4. Serialize every layer perfectly
+    // 4. Serialize every layer
     for (const auto& layer : m_layers) {
         // Name
         uint32_t nameLen = static_cast<uint32_t>(layer->name.size());

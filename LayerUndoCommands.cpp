@@ -3,6 +3,16 @@
 // --- ADD LAYER COMMAND ---
 AddLayerCommand::AddLayerCommand(int layerIndex) : m_layerIndex(layerIndex) {}
 
+void AddLayerCommand::undo(Canvas& canvas) {
+    // Take the layer off the canvas and hold it in the command
+    m_savedLayer = canvas.removeLayer(m_layerIndex);
+}
+
+void AddLayerCommand::redo(Canvas& canvas) {
+    // Put the layer back onto the canvas
+    canvas.insertLayer(m_layerIndex, std::move(m_savedLayer));
+}
+
 // --- MOVE LAYER COMMAND ---
 MoveLayerCommand::MoveLayerCommand(int fromIndex, int toIndex)
     : m_fromIndex(fromIndex), m_toIndex(toIndex) {
@@ -23,26 +33,11 @@ OpacityChangeCommand::OpacityChangeCommand(int layerIndex, float oldOpacity, flo
     : m_layerIndex(layerIndex), m_oldOpacity(oldOpacity), m_newOpacity(newOpacity) {
 }
 
-void AddLayerCommand::undo(Canvas& canvas) {
-    // Take the layer off the canvas and hold it in the command
-    m_savedLayer = canvas.removeLayer(m_layerIndex);
-}
-
-void AddLayerCommand::redo(Canvas& canvas) {
-    // Put the layer back onto the canvas
-    canvas.insertLayer(m_layerIndex, std::move(m_savedLayer));
-}
-
 void OpacityChangeCommand::undo(Canvas& canvas) {
-    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
-        canvas.getLayers()[m_layerIndex]->opacity = m_oldOpacity;
-    }
+    canvas.setLayerOpacity(m_layerIndex, m_oldOpacity);
 }
-
 void OpacityChangeCommand::redo(Canvas& canvas) {
-    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
-        canvas.getLayers()[m_layerIndex]->opacity = m_newOpacity;
-    }
+    canvas.setLayerOpacity(m_layerIndex, m_newOpacity);
 }
 
 // --- BLEND MODE COMMAND ---
@@ -117,15 +112,22 @@ RenameLayerCommand::RenameLayerCommand(int layerIndex, const std::string& oldNam
 }
 
 void RenameLayerCommand::undo(Canvas& canvas) {
-    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
-        canvas.getLayers()[m_layerIndex]->name = m_oldName;
-    }
+    canvas.setLayerName(m_layerIndex, m_oldName);
+}
+void RenameLayerCommand::redo(Canvas& canvas) {
+    canvas.setLayerName(m_layerIndex, m_newName);
 }
 
-void RenameLayerCommand::redo(Canvas& canvas) {
-    if (m_layerIndex >= 0 && m_layerIndex < canvas.getLayers().size()) {
-        canvas.getLayers()[m_layerIndex]->name = m_newName;
-    }
+// --- VISIBILITY CHANGE COMMAND ---
+VisibilityChangeCommand::VisibilityChangeCommand(int layerIndex, bool oldState, bool newState)
+    : m_layerIndex(layerIndex), m_oldState(oldState), m_newState(newState) {
+}
+
+void VisibilityChangeCommand::undo(Canvas& canvas) {
+    canvas.setLayerVisibility(m_layerIndex, m_oldState);
+}
+void VisibilityChangeCommand::redo(Canvas& canvas) {
+    canvas.setLayerVisibility(m_layerIndex, m_newState);
 }
 
 // --- CLIP LAYER COMMAND ---

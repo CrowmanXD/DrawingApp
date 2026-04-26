@@ -5,15 +5,15 @@
 
 class MockAssistant : public IAssistant {
 public:
-    std::vector<AIOperation> requestAction(const Canvas& currentContext, const std::string& userPrompt) override {
-        // 1. Simulate network latency (fake 2-second delay)
-        // Because this runs on our background thread, your UI will NOT freeze during this time!
+    AIResponse requestAction(const AssistantContext& currentContext, const std::vector<ChatMessage>& chatHistory) override {
         std::this_thread::sleep_for(std::chrono::seconds(2));
 
-        // 2. Return a hardcoded action as if the AI decided to do this
-        std::vector<AIOperation> actions;
-        actions.push_back(AddLayerAction{ "AI Sketch Layer" });
+        AIResponse response;
+        response.message = "I've created the new layer you asked for!";
 
-        return actions;
+        const std::string prefix = chatHistory.empty() ? "AI Sketch" : "AI: " + chatHistory.back().text.substr(0, 10);
+        response.actions.push_back(AddLayerAction{ prefix });
+
+        return response;
     }
 };

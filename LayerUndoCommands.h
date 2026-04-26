@@ -87,6 +87,18 @@ private:
     std::string m_newName;
 };
 
+class VisibilityChangeCommand : public UndoCommand {
+public:
+    VisibilityChangeCommand(int layerIndex, bool oldState, bool newState);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    int m_layerIndex;
+    bool m_oldState;
+    bool m_newState;
+};
+
 class ClipLayerCommand : public UndoCommand {
 public:
     ClipLayerCommand(int layerIndex, bool oldState, bool newState);

@@ -7,8 +7,21 @@
 #include <mutex>
 #include <vector>
 #include <variant>
+#include <optional>
 
-// --- GAP 6: ERROR & STATE REPORTING ---
+struct AssistantLayerInfo {
+    std::string name;
+    bool visible = true;
+};
+
+struct AssistantContext {
+    sf::Vector2u canvasSize{ 0, 0 };
+    int activeLayerIndex = -1;
+    bool hasSelection = false;
+    std::vector<AssistantLayerInfo> layers;
+};
+
+// --- ERROR & STATE REPORTING ---
 enum class AssistantState {
     Idle,
     Thinking,
@@ -16,23 +29,39 @@ enum class AssistantState {
     Error
 };
 
-// --- GAP 3: TYPED ACTION CONTRACT ---
+// --- TYPED ACTION CONTRACT ---
 // These DTOs contain pure data. No rendering logic allowed here.
 struct AddLayerAction { std::string name; };
 struct DeleteLayerAction { int targetIndex; };
 struct StrokeAction { std::vector<sf::Vector2f> points; float size; sf::Color color; };
+struct ModifyLayerAction {
+    int targetIndex = -1; // Default to -1 so we know if the AI didn't provide it
+    std::string targetName = "";
+    std::optional<std::string> newName;
+    std::optional<bool> newVisibility;
+    std::optional<float> newOpacity;
+};
 
 // A strict variant holding only approved operations
-using AIOperation = std::variant<AddLayerAction, DeleteLayerAction, StrokeAction>;
+using AIOperation = std::variant<AddLayerAction, DeleteLayerAction, StrokeAction, ModifyLayerAction>;
+
+struct AIResponse {
+    std::string message;
+    std::vector<AIOperation> actions;
+};
+
+struct ChatMessage {
+    std::string sender; // "You" or "AI"
+    std::string text;
+};
 
 class IAssistant {
 public:
     virtual ~IAssistant() = default;
-    // Returns a list of strictly typed actions, or throws an exception on network failure
-    virtual std::vector<AIOperation> requestAction(const Canvas& currentContext, const std::string& userPrompt) = 0;
+    virtual AIResponse requestAction(const AssistantContext& currentContext, const std::vector<ChatMessage>& chatHistory) = 0;
 };
 
-// --- GAP 4: ASYNC EXECUTION MODEL ---
+// --- ASYNC EXECUTION MODEL ---
 class AssistantController {
 public:
     explicit AssistantController(Canvas& canvas);
@@ -43,12 +72,13 @@ public:
     // Thread-safe state access for ImGui
     AssistantState getState() const;
     std::string getLastError() const;
+    const std::vector<ChatMessage>& getChatHistory() const { return m_chatHistory; }
 
     // Kicks off the background thread
     void requestAIHelp(const std::string& prompt);
 
     // Called every frame by Application::update() to safely process finished AI tasks on the MAIN thread
-    void processPendingActions(bool previewOnly); // Gap 5: Enforce preview boundary here
+    void processPendingActions(bool previewOnly); // Enforce preview boundary here
 
 private:
     Canvas& m_canvas;
@@ -60,7 +90,9 @@ private:
 
     mutable std::mutex m_mutex;
     std::string m_lastError;
-    std::vector<AIOperation> m_pendingOperations;
+    AIResponse m_pendingResponse;
+    std::vector<ChatMessage> m_chatHistory;
 
+    AssistantContext buildContextSnapshot() const;
     void executeAction(const AIOperation& op, bool previewOnly);
 };

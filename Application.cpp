@@ -1,6 +1,7 @@
 #include "Application.h"
 #include "ClipboardHelper.h"
 #include "MockAssistant.h"
+#include "LLMAssistant.h"
 
 Application::Application()
     : m_window(
@@ -89,8 +90,8 @@ void Application::startDrawing(unsigned int width, unsigned int height) {
 
     m_assistant = std::make_unique<AssistantController>(*m_canvas);
 
-    //Attach the mock backend
-    m_assistant->setBackend(std::make_unique<MockAssistant>());
+    // This expects a local AI server running on port 1234.
+    m_assistant->setBackend(std::make_unique<LLMAssistant>("localhost", 1234));
     m_state = AppState::DrawingEditor;
 }
 
