@@ -18,6 +18,13 @@ void DabCompositor::paintDab(Canvas& canvas, const Dab& dab, const sf::Texture& 
     // Apply flow as opacity - low flow prevents caterpillar effect
     sf::Color dabColor = dab.color;
     dabColor.a = static_cast<std::uint8_t>(dab.color.a * dab.flow);
+
+    // Premultiply the RGB channels by the new Alpha
+    float alphaFactor = dabColor.a / 255.0f;
+    dabColor.r = static_cast<std::uint8_t>(dabColor.r * alphaFactor);
+    dabColor.g = static_cast<std::uint8_t>(dabColor.g * alphaFactor);
+    dabColor.b = static_cast<std::uint8_t>(dabColor.b * alphaFactor);
+
     brush.setColor(dabColor);
 
     sf::RenderStates states(blendMode);

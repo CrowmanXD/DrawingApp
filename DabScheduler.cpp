@@ -12,39 +12,47 @@ DabScheduler::DabScheduler(float spacing)
 std::vector<Dab> DabScheduler::scheduleDabs(const StrokePoint& currentPoint, const StrokePoint& lastPoint) {
     std::vector<Dab> dabs;
 
-    const float dx = currentPoint.position.x - lastPoint.position.x;
-    const float dy = currentPoint.position.y - lastPoint.position.y;
-    const float segmentLength = std::sqrt(dx * dx + dy * dy);
+    float dx = currentPoint.position.x - lastPoint.position.x;
+    float dy = currentPoint.position.y - lastPoint.position.y;
+    float segmentLength = std::sqrt(dx * dx + dy * dy);
 
-    if (segmentLength < 0.001f) {
+    float spacing = std::max(0.01f, m_minDistance);
+
+    // Always accumulate the distance
+    m_accumulatedDistance += segmentLength;
+
+    // If not enough distance to drop a dab yet, wait for the next frame.
+    if (m_accumulatedDistance < spacing) {
         return dabs;
     }
 
-    const float spacing = std::max(0.01f, m_minDistance);
-
-    const float dirX = dx / segmentLength;
-    const float dirY = dy / segmentLength;
-    const float perpX = -dirY;
-    const float perpY = dirX;
-
-    float progressed = 0.0f;
-    float distanceToNextDab = spacing - m_accumulatedDistance;
-    if (distanceToNextDab <= 0.0f) {
-        distanceToNextDab = spacing;
+    float dirX = 1.0f;
+    float dirY = 0.0f;
+    if (segmentLength > 0.0001f) {
+        dirX = dx / segmentLength;
+        dirY = dy / segmentLength;
     }
+    float perpX = -dirY;
+    float perpY = dirX;
 
-    while (progressed + distanceToNextDab <= segmentLength) {
-        progressed += distanceToNextDab;
-        const float t = progressed / segmentLength;
+    // Trace backward mathematically to find exactly where the first dab should have spawned
+    float leftoverFromLastFrame = m_accumulatedDistance - segmentLength;
+    float distIntoSegment = spacing - leftoverFromLastFrame;
+
+    // Step along the segment and drop dabs
+    while (distIntoSegment <= segmentLength) {
+        float t = 0.0f;
+        if (segmentLength > 0.0001f) {
+            t = distIntoSegment / segmentLength;
+        }
 
         Dab dab;
-        const float baseX = lastPoint.position.x + dx * t;
-        const float baseY = lastPoint.position.y + dy * t;
+        float baseX = lastPoint.position.x + dx * t;
+        float baseY = lastPoint.position.y + dy * t;
 
-        // Keep jitter subtle and relative to spacing to avoid visible bead artifacts.
-        const float jitterPixels = m_jitter * spacing * 0.35f;
-        const float perpendicularOffset = (m_randomDist(m_rng) - 0.5f) * 2.0f * jitterPixels;
-        const float forwardOffset = (m_randomDist(m_rng) - 0.5f) * 0.3f * jitterPixels;
+        float jitterPixels = m_jitter * spacing * 0.35f;
+        float perpendicularOffset = (m_randomDist(m_rng) - 0.5f) * 2.0f * jitterPixels;
+        float forwardOffset = (m_randomDist(m_rng) - 0.5f) * 0.3f * jitterPixels;
 
         dab.position = sf::Vector2f(
             baseX + perpX * perpendicularOffset + dirX * forwardOffset,
@@ -56,11 +64,11 @@ std::vector<Dab> DabScheduler::scheduleDabs(const StrokePoint& currentPoint, con
         dab.flow = 1.0f;
         dabs.push_back(dab);
 
-        distanceToNextDab = spacing;
+        distIntoSegment += spacing;
     }
 
-    // Carry distance remainder into next segment (critical for consistent dab cadence).
-    m_accumulatedDistance = segmentLength - progressed;
+    // Carry the exact mathematical remainder into the next frame
+    m_accumulatedDistance = segmentLength - (distIntoSegment - spacing);
 
     return dabs;
 }

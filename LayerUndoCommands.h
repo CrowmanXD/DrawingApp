@@ -1,6 +1,7 @@
 #pragma once
 #include "UndoCommand.h"
 #include "Canvas.h"
+#include <SFML/Graphics/Image.hpp>
 #include <memory>
 
 class AddLayerCommand : public UndoCommand {
@@ -134,4 +135,16 @@ public:
 
 private:
     std::vector<std::unique_ptr<UndoCommand>> m_commands;
+};
+
+class CropUndoCommand : public UndoCommand {
+public:
+    CropUndoCommand(sf::Vector2u oldSize, sf::IntRect cropRect, std::vector<std::unique_ptr<sf::Image>> oldImages);
+    void undo(Canvas& canvas) override;
+    void redo(Canvas& canvas) override;
+
+private:
+    sf::Vector2u m_oldSize;
+    sf::IntRect m_cropRect;
+    std::vector<std::unique_ptr<sf::Image>> m_oldImages;
 };

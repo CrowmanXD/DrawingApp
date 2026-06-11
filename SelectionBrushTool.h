@@ -20,5 +20,8 @@ private:
     float m_size = 20.f;
     bool m_eraser = false;
 
+    std::unique_ptr<sf::Image> m_beforeImage;
+    bool m_beforeHasSelection = false;
+
     void drawLine(Canvas& canvas, sf::Vector2f start, sf::Vector2f end);
 };

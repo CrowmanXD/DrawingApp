@@ -26,8 +26,7 @@ void BrushDynamics::evaluateDab(Dab& dab, const StrokePoint& point, const sf::Co
     dab.color.a = static_cast<std::uint8_t>(baseColor.a * dab.opacity);
 }
 
-float BrushDynamics::evaluateInfluences(const std::vector<std::shared_ptr<ParameterInfluence>>& influences,
-                                       const StrokePoint& point) {
+float BrushDynamics::evaluateInfluences(const std::vector<std::shared_ptr<ParameterInfluence>>& influences, const StrokePoint& point) {
     if (influences.empty()) return 1.0f;
     
     float result = 1.0f;

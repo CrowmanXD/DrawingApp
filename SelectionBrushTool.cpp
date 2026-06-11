@@ -1,10 +1,14 @@
 #include "SelectionBrushTool.h"
+#include "SelectionUndoCommand.h"
 #include "Canvas.h"
 #include <cmath>
 
 void SelectionBrushTool::onMouseDown(Canvas& canvas, sf::Vector2f pos) {
     m_lastPos = pos;
     m_isDrawing = true;
+
+    m_beforeImage = std::make_unique<sf::Image>(canvas.getSelectionTextureConst().copyToImage());
+    m_beforeHasSelection = canvas.hasSelection();
 
     // Notice we do NOT clear the texture here
     // This allows you to click multiple times to paint a massive, complex selection
@@ -24,6 +28,11 @@ void SelectionBrushTool::onMouseUp(Canvas& canvas, sf::Vector2f pos) {
     if (!m_isDrawing) return;
     m_isDrawing = false;
     canvas.setSelectionLive(false);
+
+    auto afterImage = std::make_unique<sf::Image>(canvas.getSelectionTextureConst().copyToImage());
+    canvas.pushUndoCommand(std::make_unique<SelectionUndoCommand>(
+        std::move(m_beforeImage), std::move(afterImage), m_beforeHasSelection, canvas.hasSelection()
+    ));
 }
 
 void SelectionBrushTool::drawLine(Canvas& canvas, sf::Vector2f start, sf::Vector2f end) {

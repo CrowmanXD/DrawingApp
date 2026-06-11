@@ -2,7 +2,6 @@
 #include "StrokeUndoCommand.h"
 #include "LayerUndoCommands.h"
 #include "ClipboardHelper.h"
-
 #include <fstream>
 #include <cstring>
 
@@ -11,7 +10,7 @@ Canvas::Canvas(sf::Vector2u size) : m_size(size) {
     m_clippingTexture = std::make_unique<sf::RenderTexture>(size);
     // Automatically create the first layer
     addLayer();
-    m_layers[0]->name = "Background";
+    m_layers[0]->name = "layer 1";
     m_selectedLayers.insert(0);
 
     m_selectionTexture = std::make_unique<sf::RenderTexture>(size);
@@ -27,13 +26,13 @@ Canvas::Canvas(sf::Vector2u size) : m_size(size) {
             vec2 maskUv = gl_FragCoord.xy / canvasSize;
             vec4 mask = texture2D(selectionMask, maskUv);
             
-            gl_FragColor = vec4(pixel.rgb, pixel.a * mask.a);
+            // Multiply the RGB by the mask alpha to avoid ghost pixels
+            gl_FragColor = vec4(pixel.rgb * mask.a, pixel.a * mask.a);
         }
     )";
 
     if (sf::Shader::isAvailable()) {
-        // Only attempt to set uniforms IF the shader successfully compiled
-        // This permanently prevents the SFML 3 vector out-of-range crash.
+        // Only attempt to set uniforms if the shader successfully compiled
         if (m_selectionShader.loadFromMemory(fragShader, sf::Shader::Type::Fragment)) {
             m_selectionShader.setUniform("canvasSize", sf::Vector2f(static_cast<float>(size.x), static_cast<float>(size.y)));
         }
@@ -43,12 +42,50 @@ Canvas::Canvas(sf::Vector2u size) : m_size(size) {
 Canvas::~Canvas() = default;
 
 sf::BlendMode Canvas::getSfmlBlendMode(LayerBlendMode mode, bool isClipped) const {
+    int modeInt = static_cast<int>(mode);
+
     if (isClipped) {
-        return sf::BlendMode(sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add);
+        // --- CLIPPED BLENDING (Must mask using Destination Alpha) ---
+        if (modeInt == 1) { // Multiply
+            return sf::BlendMode(
+                sf::BlendMode::Factor::DstColor, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
+            );
+        }
+        else if (modeInt == 2) { // Add (Linear Dodge)
+            return sf::BlendMode(
+                sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
+            );
+        }
+        else { // Normal
+            return sf::BlendMode(
+                sf::BlendMode::Factor::DstAlpha, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add
+            );
+        }
     }
-    if (mode == LayerBlendMode::Multiply) return sf::BlendMode(sf::BlendMode::Factor::DstColor, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
-    if (mode == LayerBlendMode::Add) return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add);
-    return sf::BlendMode(sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add, sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add);
+    else {
+        // --- STANDARD BLENDING ---
+        if (modeInt == 1) { // Multiply
+            return sf::BlendMode(
+                sf::BlendMode::Factor::DstColor, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+            );
+        }
+        else if (modeInt == 2) { // Add (Linear Dodge)
+            return sf::BlendMode(
+                sf::BlendMode::Factor::One, sf::BlendMode::Factor::One, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+            );
+        }
+        else { // Normal (Premultiplied)
+            return sf::BlendMode(
+                sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+                sf::BlendMode::Factor::One, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+            );
+        }
+    }
 }
 
 void Canvas::addLayer() {
@@ -69,7 +106,7 @@ void Canvas::addLayer() {
     m_activeLayerIndex = insertPos;
 
     if (m_layers.size() > 1) {
-        m_undoStack.push(std::make_unique<AddLayerCommand>(m_activeLayerIndex));
+        pushUndoCommand(std::make_unique<AddLayerCommand>(m_activeLayerIndex));
     }
 }
 
@@ -86,7 +123,7 @@ void Canvas::addFolder() {
     m_layers.insert(m_layers.begin() + insertPos, std::move(newFolder));
     m_activeLayerIndex = insertPos;
 
-    m_undoStack.push(std::make_unique<AddLayerCommand>(m_activeLayerIndex));
+    pushUndoCommand(std::make_unique<AddLayerCommand>(m_activeLayerIndex));
 }
 
 std::unique_ptr<Layer> Canvas::removeLayer(int index) {
@@ -328,7 +365,9 @@ void Canvas::mergeFolder(int index) {
     m_layers[index]->blendMode = LayerBlendMode::Normal;
     m_layers[index]->opacity = 1.0f;
 
-    renderComposite();
+    // Passing Transparent Black forces the folder to render with a transparent 
+    // background so it doesn't bake white pixels into the final flattened image
+    renderComposite(sf::Color(0, 0, 0, 0));
 
     auto mergedLayer = m_layers[index]->cloneMeta();
     mergedLayer->type = LayerType::Content; // Tell the engine this is now a flattened image
@@ -362,7 +401,8 @@ void Canvas::mergeFolder(int index) {
 
     setActiveLayer(m_activeLayerIndex);
 
-    renderComposite();
+    // Restore standard screen rendering with the White background
+    renderComposite(sf::Color::White);
 
     pushUndoCommand(std::make_unique<MergeLayerCommand>(index, count, std::move(extracted), std::move(mergedLayer)));
 }
@@ -422,11 +462,126 @@ void Canvas::setLayerVisibility(int index, bool isVisible) {
     }
 }
 
+void Canvas::setLayerBlendMode(int index, int newMode) {
+    if (index >= 0 && index < m_layers.size()) {
+        // Cast the integer back to your custom enum
+        m_layers[index]->blendMode = static_cast<LayerBlendMode>(newMode);
+    }
+}
+
+void Canvas::applyCrop(const sf::IntRect& rect) {
+    if (rect.size.x <= 0 || rect.size.y <= 0) return;
+
+    // Shrink the canvas
+    m_size = sf::Vector2u(rect.size.x, rect.size.y);
+
+    // Recreate the global utility textures
+    m_compositeTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_clippingTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture->clear(sf::Color(0, 0, 0, 0));
+
+    // Shift and cut every layer
+    for (auto& layer : m_layers) {
+        sf::Image oldImg = layer->texture->getTexture().copyToImage();
+        layer->texture = std::make_unique<sf::RenderTexture>(m_size);
+        layer->texture->clear(sf::Color(0, 0, 0, 0));
+
+        sf::Texture tempTex;
+        if (tempTex.loadFromImage(oldImg)) {
+            sf::Sprite sprite(tempTex);
+            // Offset it backwards so the top-left of the crop box becomes (0,0)
+            sprite.setPosition(sf::Vector2f(-rect.position.x, -rect.position.y));
+            layer->texture->draw(sprite, sf::RenderStates(sf::BlendNone));
+        }
+        layer->texture->display();
+    }
+}
+
+void Canvas::resizeQuietly(sf::Vector2u newSize) {
+    m_size = newSize;
+    m_compositeTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_clippingTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture = std::make_unique<sf::RenderTexture>(m_size);
+    m_selectionTexture->clear(sf::Color(0, 0, 0, 0));
+
+    for (auto& layer : m_layers) {
+        layer->texture = std::make_unique<sf::RenderTexture>(m_size);
+        layer->texture->clear(sf::Color(0, 0, 0, 0));
+    }
+}
+
+void Canvas::flipCanvasHorizontal() {
+    beginBatchCommand();
+
+    // Flip every visual layer
+    for (int i = 0; i < m_layers.size(); ++i) {
+        auto& layer = m_layers[i];
+
+        if (layer->type == LayerType::Content && !layer->isLocked) {
+            // Pre-bake active layer transformations to ensure pixel-perfect flips
+            if (layer->offset != sf::Vector2f(0.f, 0.f) || layer->scale != sf::Vector2f(1.f, 1.f)) {
+                auto preBakeImg = std::make_unique<sf::Image>(layer->texture->getTexture().copyToImage());
+                bakeLayerTransform(i, std::move(preBakeImg));
+            }
+
+            auto beforeImage = std::make_unique<sf::Image>(layer->texture->getTexture().copyToImage());
+
+            // GPU-Accelerated Flip
+            sf::RenderTexture tempTex(m_size);
+            tempTex.clear(sf::Color(0, 0, 0, 0));
+
+            sf::Sprite sprite(layer->texture->getTexture());
+            // Set origin to the exact mathematical center of the canvas
+            sprite.setOrigin(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
+            sprite.setPosition(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
+            // A negative X scale perfectly mirrors the texture horizontally
+            sprite.setScale(sf::Vector2f(-1.f, 1.f));
+
+            tempTex.draw(sprite, sf::RenderStates(sf::BlendNone));
+            tempTex.display();
+
+            auto afterImage = std::make_unique<sf::Image>(tempTex.getTexture().copyToImage());
+
+            // Save the flipped texture back to the layer
+            layer->texture->clear(sf::Color(0, 0, 0, 0));
+            layer->texture->draw(sf::Sprite(tempTex.getTexture()), sf::RenderStates(sf::BlendNone));
+            layer->texture->display();
+
+            // Store in the batch Undo history
+            pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(beforeImage), std::move(afterImage), i));
+        }
+    }
+
+    // Flip the active selection mask (if the Lasso/Rect select is active)
+    if (m_hasSelection) {
+        sf::RenderTexture tempMask(m_size);
+        tempMask.clear(sf::Color(0, 0, 0, 0));
+
+        sf::Sprite maskSprite(m_selectionTexture->getTexture());
+        maskSprite.setOrigin(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
+        maskSprite.setPosition(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
+        maskSprite.setScale(sf::Vector2f(-1.f, 1.f));
+
+        tempMask.draw(maskSprite, sf::RenderStates(sf::BlendNone));
+        tempMask.display();
+
+        m_selectionTexture->clear(sf::Color(0, 0, 0, 0));
+        m_selectionTexture->draw(sf::Sprite(tempMask.getTexture()), sf::RenderStates(sf::BlendNone));
+        m_selectionTexture->display();
+    }
+
+    endBatchCommand();
+    renderComposite(); // Force the screen to update instantly
+}
+
 void Canvas::beginBatchCommand() {
     m_activeBatch = std::make_unique<BatchCommand>();
 }
 
 void Canvas::endBatchCommand() {
+    // Manually trigger the flag for batch commands
+    m_isDirty = true;
     if (m_activeBatch && !m_activeBatch->isEmpty()) {
         m_undoStack.push(std::move(m_activeBatch));
     }
@@ -434,6 +589,7 @@ void Canvas::endBatchCommand() {
 }
 
 void Canvas::pushUndoCommand(std::unique_ptr<UndoCommand> cmd) {
+    m_isDirty = true; // Mark as modified
     if (m_activeBatch) {
         m_activeBatch->addCommand(std::move(cmd));
     }
@@ -448,7 +604,19 @@ sf::RenderTexture& Canvas::getActiveTexture() {
 
 void Canvas::beginStroke() {
     m_inStroke = true;
+    m_strokeModified = false;
     m_strokeBackup = getActiveTexture().getTexture().copyToImage();
+}
+
+void Canvas::restoreStrokeBackup() {
+    if (!m_inStroke) return;
+
+    sf::Texture texture;
+    if (texture.loadFromImage(m_strokeBackup)) {
+        getActiveTexture().clear(sf::Color(0, 0, 0, 0));
+        getActiveTexture().draw(sf::Sprite(texture), sf::RenderStates(sf::BlendNone));
+        // Don't call display() yet because the Tool is about to draw the preview on top
+    }
 }
 
 void Canvas::endStroke() {
@@ -456,6 +624,11 @@ void Canvas::endStroke() {
         return;
 
     m_inStroke = false;
+
+    if (!m_strokeModified) return;
+
+    // Tell the UI to update the thumbnail
+    m_layers[m_activeLayerIndex]->boundsDirty = true;
 
     // Capture the canvas state after drawing
     auto beforeImage = std::make_unique<sf::Image>(m_strokeBackup);
@@ -465,11 +638,13 @@ void Canvas::endStroke() {
     auto cmd = std::make_unique<StrokeUndoCommand>(
         std::move(beforeImage), std::move(afterImage), m_activeLayerIndex
     );
-    m_undoStack.push(std::move(cmd));
+    pushUndoCommand(std::move(cmd));
 }
 
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
     if (!m_inStroke) return;
+
+    m_strokeModified = true; //Flag that pixels were actually modified
 
     sf::RenderStates states(sf::BlendAlpha);
 
@@ -490,6 +665,8 @@ void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position) {
 void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states) {
     if (!m_inStroke) return;
 
+    m_strokeModified = true; //Flag that pixels were actually modified
+
     sf::RenderStates finalStates = states;
 
     // Automatically clip the brush stroke to the selection mask
@@ -507,6 +684,7 @@ void Canvas::draw(const sf::Drawable& drawable, sf::Vector2f position, const sf:
 }
 
 void Canvas::undo() {
+    m_isDirty = true; // Mark as modified
     if (m_inStroke) {
         m_inStroke = false;
         sf::Texture texture;
@@ -520,6 +698,7 @@ void Canvas::undo() {
 }
 
 void Canvas::redo() {
+    m_isDirty = true; // Mark as modified
     if (m_inStroke) {
         m_inStroke = false;
         sf::Texture texture;
@@ -532,8 +711,8 @@ void Canvas::redo() {
     m_undoStack.redo(*this);
 }
 
-void Canvas::renderComposite() {
-    m_compositeTexture->clear(sf::Color(0, 0, 0, 0));
+void Canvas::renderComposite(sf::Color clearColor) {
+    m_compositeTexture->clear(clearColor);
 
     struct RenderNode {
         sf::RenderTarget* target;
@@ -555,7 +734,7 @@ void Canvas::renderComposite() {
         std::uint8_t alpha = static_cast<std::uint8_t>(opacity * 255.0f);
         sprite.setColor(sf::Color(alpha, alpha, alpha, alpha));
         destTarget->draw(sprite, sf::RenderStates(blendMode));
-        };
+    };
 
     Layer* activeClippingBase = nullptr;
 
@@ -618,7 +797,7 @@ void Canvas::renderComposite() {
                 if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), 1.0f, getSfmlBlendMode(LayerBlendMode::Normal), layer->offset, layer->scale);
             }
             else if (layer->isClipped && activeClippingBase != nullptr) {
-                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity, getSfmlBlendMode(LayerBlendMode::Normal, true), layer->offset, layer->scale);
+                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity, getSfmlBlendMode(layer->blendMode, true), layer->offset, layer->scale);
             }
             else {
                 drawLayerNode(layer.get(), stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
@@ -740,7 +919,10 @@ void Canvas::clearSelectionOnSelectedLayers() {
     sf::Sprite maskSprite(m_selectionTexture->getTexture());
 
     for (int sel : m_selectedLayers) {
-        if (sel >= 0 && sel < m_layers.size() && m_layers[sel]->type == LayerType::Content) {
+        if (sel >= 0 && sel < m_layers.size() && m_layers[sel]->type == LayerType::Content && !m_layers[sel]->isLocked) {
+            // Tell the UI to update the thumbnail
+            m_layers[sel]->boundsDirty = true;
+
             auto beforeImage = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
 
             m_layers[sel]->texture->draw(maskSprite, sf::RenderStates(eraseMode));
@@ -755,6 +937,122 @@ void Canvas::clearSelectionOnSelectedLayers() {
     renderComposite(); // Force a fresh composite so the screen updates instantly
 }
 
+void Canvas::copySelectionToNewLayer() {
+    if (!m_hasSelection) return;
+
+    // Find the source layer (we pull from the top-most selected drawing layer)
+    int srcIdx = -1;
+    for (int sel : m_selectedLayers) {
+        if (m_layers[sel]->type == LayerType::Content && !m_layers[sel]->isLocked) {
+            srcIdx = sel;
+            break;
+        }
+    }
+    if (srcIdx == -1) return;
+
+    // Mathematically mask the active layer with the selection texture and extract the pixels
+    sf::RenderTexture tempTex(m_size);
+    tempTex.clear(sf::Color(0, 0, 0, 0));
+    sf::RenderStates states(sf::BlendNone);
+    if (sf::Shader::isAvailable()) {
+        m_selectionShader.setUniform("baseTexture", m_layers[srcIdx]->texture->getTexture());
+        m_selectionShader.setUniform("selectionMask", m_selectionTexture->getTexture());
+        states.shader = &m_selectionShader;
+    }
+    tempTex.draw(sf::Sprite(m_layers[srcIdx]->texture->getTexture()), states);
+    tempTex.display();
+
+    sf::Image copiedPixels = tempTex.getTexture().copyToImage();
+
+    // Batch the layer creation and pixel stamping so Undo removes the layer cleanly
+    beginBatchCommand();
+    addLayer();
+    m_layers[m_activeLayerIndex]->name = "Copied Layer";
+
+    auto beforeImg = std::make_unique<sf::Image>(m_layers[m_activeLayerIndex]->texture->getTexture().copyToImage());
+
+    sf::Texture pasteTex;
+    pasteTex.loadFromImage(copiedPixels);
+    m_layers[m_activeLayerIndex]->texture->draw(sf::Sprite(pasteTex), sf::RenderStates(sf::BlendNone));
+    m_layers[m_activeLayerIndex]->texture->display();
+
+    auto afterImg = std::make_unique<sf::Image>(m_layers[m_activeLayerIndex]->texture->getTexture().copyToImage());
+    pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(beforeImg), std::move(afterImg), m_activeLayerIndex));
+
+    endBatchCommand();
+    renderComposite();
+
+    // Clear the selection mask
+    getSelectionTexture().clear(sf::Color(0, 0, 0, 0));
+    setSelectionActive(false);
+}
+
+void Canvas::cutSelectionToNewLayer() {
+    if (!m_hasSelection) return;
+
+    int srcIdx = -1;
+    for (int sel : m_selectedLayers) {
+        if (m_layers[sel]->type == LayerType::Content && !m_layers[sel]->isLocked) {
+            srcIdx = sel;
+            break;
+        }
+    }
+    if (srcIdx == -1) return;
+
+    beginBatchCommand();
+
+    // Extract the masked pixels first
+    sf::RenderTexture tempTex(m_size);
+    tempTex.clear(sf::Color(0, 0, 0, 0));
+    sf::RenderStates states(sf::BlendNone);
+    if (sf::Shader::isAvailable()) {
+        m_selectionShader.setUniform("baseTexture", m_layers[srcIdx]->texture->getTexture());
+        m_selectionShader.setUniform("selectionMask", m_selectionTexture->getTexture());
+        states.shader = &m_selectionShader;
+    }
+    tempTex.draw(sf::Sprite(m_layers[srcIdx]->texture->getTexture()), states);
+    tempTex.display();
+    sf::Image cutPixels = tempTex.getTexture().copyToImage();
+
+    // Erase the selection from all currently selected original layers
+    sf::BlendMode eraseMode(
+        sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add,
+        sf::BlendMode::Factor::Zero, sf::BlendMode::Factor::OneMinusSrcAlpha, sf::BlendMode::Equation::Add
+    );
+    sf::Sprite maskSprite(m_selectionTexture->getTexture());
+
+    for (int sel : m_selectedLayers) {
+        if (m_layers[sel]->type == LayerType::Content) {
+            auto eraseBeforeImg = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+            m_layers[sel]->texture->draw(maskSprite, sf::RenderStates(eraseMode));
+            m_layers[sel]->texture->display();
+            auto eraseAfterImg = std::make_unique<sf::Image>(m_layers[sel]->texture->getTexture().copyToImage());
+
+            pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(eraseBeforeImg), std::move(eraseAfterImg), sel));
+        }
+    }
+
+    // Create the new layer and paste the pixels
+    addLayer();
+    m_layers[m_activeLayerIndex]->name = "Cut Layer";
+
+    auto pasteBeforeImg = std::make_unique<sf::Image>(m_layers[m_activeLayerIndex]->texture->getTexture().copyToImage());
+    sf::Texture pasteTex;
+    pasteTex.loadFromImage(cutPixels);
+    m_layers[m_activeLayerIndex]->texture->draw(sf::Sprite(pasteTex), sf::RenderStates(sf::BlendNone));
+    m_layers[m_activeLayerIndex]->texture->display();
+
+    auto pasteAfterImg = std::make_unique<sf::Image>(m_layers[m_activeLayerIndex]->texture->getTexture().copyToImage());
+    pushUndoCommand(std::make_unique<StrokeUndoCommand>(std::move(pasteBeforeImg), std::move(pasteAfterImg), m_activeLayerIndex));
+
+    endBatchCommand();
+    renderComposite();
+
+    // Clear the selection mask automatically after a Cut
+    getSelectionTexture().clear(sf::Color(0, 0, 0, 0));
+    setSelectionActive(false);
+}
+
 void Canvas::importFromImage(const sf::Image& image, const std::string& layerName) {
     if (image.getSize().x == 0 || image.getSize().y == 0) return;
 
@@ -764,6 +1062,9 @@ void Canvas::importFromImage(const sf::Image& image, const std::string& layerNam
     addLayer();
     auto& activeLayer = m_layers[m_activeLayerIndex];
     activeLayer->name = layerName;
+
+    // Tell the UI to update the thumbnail
+    activeLayer->boundsDirty = true;
 
     activeLayer->texture->clear(sf::Color(0, 0, 0, 0));
     activeLayer->texture->draw(sf::Sprite(loadedTex), sf::RenderStates(sf::BlendNone));
@@ -788,7 +1089,7 @@ bool Canvas::saveProject(const std::string& filename) {
     if (!file) return false;
 
     // 1. Write the "Magic Signature" to identify the file format
-    file.write("LAYR", 4);
+    file.write("LAY3", 4);
 
     // 2. Write Canvas Dimensions
     file.write(reinterpret_cast<const char*>(&m_size.x), sizeof(m_size.x));
@@ -810,11 +1111,13 @@ bool Canvas::saveProject(const std::string& filename) {
         file.write(reinterpret_cast<const char*>(&typeInt), sizeof(typeInt));
 
         uint8_t vis = layer->visible ? 1 : 0;
-        uint8_t lock = layer->alphaLocked ? 1 : 0;
+        uint8_t alphaLock = layer->alphaLocked ? 1 : 0;
         uint8_t clip = layer->isClipped ? 1 : 0;
+        uint8_t layerLock = layer->isLocked ? 1 : 0;
         file.write(reinterpret_cast<const char*>(&vis), sizeof(vis));
-        file.write(reinterpret_cast<const char*>(&lock), sizeof(lock));
+        file.write(reinterpret_cast<const char*>(&alphaLock), sizeof(alphaLock));
         file.write(reinterpret_cast<const char*>(&clip), sizeof(clip));
+        file.write(reinterpret_cast<const char*>(&layerLock), sizeof(layerLock));
 
         // Blend Math
         file.write(reinterpret_cast<const char*>(&layer->opacity), sizeof(layer->opacity));
@@ -828,12 +1131,20 @@ bool Canvas::saveProject(const std::string& filename) {
         file.write(reinterpret_cast<const char*>(&layer->scale.x), sizeof(layer->scale.x));
         file.write(reinterpret_cast<const char*>(&layer->scale.y), sizeof(layer->scale.y));
 
-        // 5. If it's an image layer, dump the raw 32-bit RGBA pixel array straight to disk
+        // 5. Compress the image to a PNG in memory, then write it to disk
         if (layer->type == LayerType::Content) {
             sf::Image img = layer->texture->getTexture().copyToImage();
-            const std::uint8_t* pixels = img.getPixelsPtr();
-            size_t pixelDataSize = static_cast<size_t>(m_size.x) * m_size.y * 4;
-            file.write(reinterpret_cast<const char*>(pixels), pixelDataSize);
+
+            if (auto bufferOpt = img.saveToMemory("png")) {
+                const auto& buffer = *bufferOpt; // Extract the vector from the optional
+
+                // First, write the size of the compressed data so the loader knows how much to read
+                uint32_t bufferSize = static_cast<uint32_t>(buffer.size());
+                file.write(reinterpret_cast<const char*>(&bufferSize), sizeof(bufferSize));
+
+                // Then, write the actual compressed bytes
+                file.write(reinterpret_cast<const char*>(buffer.data()), bufferSize);
+            }
         }
     }
     return true;
@@ -846,7 +1157,9 @@ bool Canvas::loadProject(const std::string& filename) {
     // 1. Check the Magic Signature
     char magic[4];
     file.read(magic, 4);
-    if (std::strncmp(magic, "LAYR", 4) != 0) return false;
+    if (std::strncmp(magic, "LAY3", 4) != 0) {
+        return false;
+    }
 
     // 2. Read Canvas Dimensions
     sf::Vector2u newSize;
@@ -889,13 +1202,16 @@ bool Canvas::loadProject(const std::string& filename) {
 
         auto layer = std::make_unique<Layer>(m_size, name, type);
 
-        uint8_t vis, lock, clip;
+        uint8_t vis, alphaLock, clip, layerLock;
         file.read(reinterpret_cast<char*>(&vis), sizeof(vis));
-        file.read(reinterpret_cast<char*>(&lock), sizeof(lock));
+        file.read(reinterpret_cast<char*>(&alphaLock), sizeof(alphaLock));
         file.read(reinterpret_cast<char*>(&clip), sizeof(clip));
+        file.read(reinterpret_cast<char*>(&layerLock), sizeof(layerLock));
+
         layer->visible = (vis != 0);
-        layer->alphaLocked = (lock != 0);
+        layer->alphaLocked = (alphaLock != 0);
         layer->isClipped = (clip != 0);
+        layer->isLocked = (layerLock != 0);
 
         file.read(reinterpret_cast<char*>(&layer->opacity), sizeof(layer->opacity));
 
@@ -910,19 +1226,24 @@ bool Canvas::loadProject(const std::string& filename) {
         file.read(reinterpret_cast<char*>(&layer->scale.y), sizeof(layer->scale.y));
 
         if (type == LayerType::Content) {
-            size_t pixelDataSize = static_cast<size_t>(m_size.x) * m_size.y * 4;
-            std::vector<std::uint8_t> pixels(pixelDataSize);
-            file.read(reinterpret_cast<char*>(pixels.data()), pixelDataSize);
+            // Read exactly how big the compressed PNG chunk is
+            uint32_t bufferSize;
+            file.read(reinterpret_cast<char*>(&bufferSize), sizeof(bufferSize));
 
-            // Rebuild the SFML texture using the raw pixels
+            // Create a buffer of that exact size and read the bytes into it
+            std::vector<std::uint8_t> buffer(bufferSize);
+            file.read(reinterpret_cast<char*>(buffer.data()), bufferSize);
+
+            // Ask SFML to decompress the PNG memory back into a pixel image
             sf::Image img;
-            img.resize(m_size, pixels.data());
-
-            sf::Texture tex;
-            tex.loadFromImage(img);
-            layer->texture->clear(sf::Color(0, 0, 0, 0));
-            layer->texture->draw(sf::Sprite(tex), sf::RenderStates(sf::BlendNone));
-            layer->texture->display();
+            if (img.loadFromMemory(buffer.data(), bufferSize)) {
+                // Rebuild the SFML texture
+                sf::Texture tex;
+                tex.loadFromImage(img);
+                layer->texture->clear(sf::Color(0, 0, 0, 0));
+                layer->texture->draw(sf::Sprite(tex), sf::RenderStates(sf::BlendNone));
+                layer->texture->display();
+            }
         }
 
         m_layers.push_back(std::move(layer));

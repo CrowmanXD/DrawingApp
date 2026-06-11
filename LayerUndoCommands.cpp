@@ -201,3 +201,26 @@ void BatchCommand::redo(Canvas& canvas) {
 bool BatchCommand::isEmpty() const {
     return m_commands.empty();
 }
+
+CropUndoCommand::CropUndoCommand(sf::Vector2u oldSize, sf::IntRect cropRect, std::vector<std::unique_ptr<sf::Image>> oldImages)
+    : m_oldSize(oldSize), m_cropRect(cropRect), m_oldImages(std::move(oldImages)) {
+}
+
+void CropUndoCommand::undo(Canvas& canvas) {
+    canvas.resizeQuietly(m_oldSize);
+    auto& layers = canvas.getLayers();
+
+    // Safely blast the old backed-up pixels back onto the resized layers
+    for (size_t i = 0; i < layers.size(); ++i) {
+        sf::Texture tex;
+        if (tex.loadFromImage(*m_oldImages[i])) {
+            layers[i]->texture->clear(sf::Color(0, 0, 0, 0));
+            layers[i]->texture->draw(sf::Sprite(tex), sf::RenderStates(sf::BlendNone));
+            layers[i]->texture->display();
+        }
+    }
+}
+
+void CropUndoCommand::redo(Canvas& canvas) {
+    canvas.applyCrop(m_cropRect);
+}

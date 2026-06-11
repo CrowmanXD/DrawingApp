@@ -26,7 +26,10 @@ struct Layer {
     bool visible = true;
     bool alphaLocked = false;
     bool isClipped = false;
+    bool isLocked = false;
     float opacity = 1.0f;
+    sf::IntRect contentBounds;       // Caches the cropped coordinates
+    bool boundsDirty = true;         // Tells the UI when to recalculate
     LayerBlendMode blendMode = LayerBlendMode::Normal;
     std::unique_ptr<sf::RenderTexture> texture;
 
@@ -71,6 +74,7 @@ public:
     void draw(const sf::Drawable& drawable, sf::Vector2f position, const sf::RenderStates& states);
 
     void beginStroke();
+    void restoreStrokeBackup();
     void endStroke();
 
     void undo();
@@ -100,6 +104,9 @@ public:
     void setLayerName(int index, const std::string& newName);
     void setLayerOpacity(int index, float newOpacity);
     void setLayerVisibility(int index, bool isVisible);
+    void setLayerBlendMode(int index, int newMode);
+    bool isDirty() const { return m_isDirty; }
+    void clearDirty() { m_isDirty = false; }
 
     // --- SELECTION MASK METHODS ---
     void setSelectionActive(bool active) { m_hasSelection = active; }
@@ -108,10 +115,16 @@ public:
     const sf::Texture& getSelectionTextureConst() const { return m_selectionTexture->getTexture(); }
     void setSelectionBounds(const sf::FloatRect& bounds) { m_selectionBounds = bounds; }
     sf::FloatRect getSelectionBounds() const { return m_selectionBounds; }
+    void copySelectionToNewLayer();
+    void cutSelectionToNewLayer();
 
     void setSelectionLive(bool live) { m_isSelectionLive = live; }
     bool isSelectionLive() const { return m_isSelectionLive; }
     void clearSelectionOnSelectedLayers(); // Deletes masked pixels across all active layers
+
+    void applyCrop(const sf::IntRect& rect);
+    void resizeQuietly(sf::Vector2u newSize);
+    void flipCanvasHorizontal();
 
     void beginBatchCommand();
     void endBatchCommand();
@@ -119,7 +132,7 @@ public:
     sf::Vector2u getSize() const { return m_size; }
     sf::RenderTexture& getActiveTexture();
 
-    void renderComposite();
+    void renderComposite(sf::Color clearColor = sf::Color::White);
     const sf::Texture& getCompositeTexture() const { return m_compositeTexture->getTexture(); }
     void bakeLayerTransform(int index, std::unique_ptr<sf::Image> beforeImage);
 
@@ -154,6 +167,8 @@ private:
 
     sf::BlendMode getSfmlBlendMode(LayerBlendMode mode, bool isClipped = false) const;
 
+    bool m_isDirty = false;
     bool m_inStroke = false;
+    bool m_strokeModified = false;
     sf::Image m_strokeBackup;
 };

@@ -1,4 +1,5 @@
 #include "RectSelectTool.h"
+#include "SelectionUndoCommand.h"
 #include "Canvas.h"
 #include <cmath>
 #include <algorithm>
@@ -6,6 +7,9 @@
 void RectSelectTool::onMouseDown(Canvas& canvas, sf::Vector2f pos) {
     m_startPos = pos;
     m_isSelecting = true;
+
+    m_beforeImage = std::make_unique<sf::Image>(canvas.getSelectionTextureConst().copyToImage());
+    m_beforeHasSelection = canvas.hasSelection();
 
     canvas.getSelectionTexture().clear(sf::Color(0, 0, 0, 0));
     canvas.setSelectionActive(false);
@@ -60,4 +64,8 @@ void RectSelectTool::onMouseUp(Canvas& canvas, sf::Vector2f pos) {
     canvas.getSelectionTexture().display();
 
     canvas.setSelectionActive(rect.size.x > 1.f && rect.size.y > 1.f);
+    auto afterImage = std::make_unique<sf::Image>(canvas.getSelectionTextureConst().copyToImage());
+    canvas.pushUndoCommand(std::make_unique<SelectionUndoCommand>(
+        std::move(m_beforeImage), std::move(afterImage), m_beforeHasSelection, canvas.hasSelection()
+    ));
 }

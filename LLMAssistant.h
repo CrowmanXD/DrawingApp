@@ -39,22 +39,45 @@ public:
         contextJson["layers"] = layersArray;
 
         // 2. A hybrid System Prompt
-        std::string systemPrompt =
-            "You are a helpful AI co-pilot in a digital drawing app. "
-            "You can chat normally, answer questions, and greet the user. "
-            "HOWEVER, if the user asks you to modify the canvas (like adding, deleting or modifying a layer), "
-            "you must include a JSON block in your response containing the actions. \n"
-            "Note: ALWAYS use the exact 'targetIndex' integer provided in the Current Canvas State when modifying layers, even if the layer's name contains a different number.\n"
-            "Supported Action Types:\n"
-            "1. { \"type\": \"AddLayer\", \"name\": \"Sketch\" }\n"
-            "2. { \"type\": \"DeleteLayer\", \"targetIndex\": 0 }\n"
-            "3. { \"type\": \"ModifyLayer\", \"targetName\": \"My Lineart\", \"newOpacity\": 0.5 }\n"
-            "4. { \"type\": \"ModifyLayer\", \"targetName\": \"Background\", \"newVisibility\": false }\n"
-            "5. { \"type\": \"ModifyLayer\", \"targetName\": \"Layer 1\", \"newName\": \"Base Color\" }\n"
-            "Note: For ModifyLayer, ALWAYS use 'targetName' to specify which layer to change. Only include the specific properties you want to change. Do NOT include 'newName' or 'newVisibility' unless specifically requested.\n"
-            "Format your actions exactly like this: \n"
-            "```json\n{ \"actions\": [ { \"type\": \"AddLayer\", \"name\": \"Sketch\" } ] }\n```\n"
-            "Current Canvas State: " + contextJson.dump();
+        std::string systemPrompt = R"(
+        You are a helpful AI co-pilot in a digital drawing app. You can chat normally, answer questions, and greet the user.
+        HOWEVER, if the user asks you to modify the canvas (like adding, deleting or modifying a layer), you must include a JSON block in your response containing the actions.
+
+        CRITICAL RULE FOR EXISTING LAYERS:
+        ALWAYS use BOTH "targetIndex" and "targetName" when modifying, moving, or deleting existing layers. You MUST use the exact 'targetIndex' integer provided in the Current Canvas State. This guarantees you target the exact layer since multiple layers can share the exact same name!
+
+        Supported Action Types:
+        1. { "type": "AddLayer", "name": "Sketch" }
+        2. { "type": "DeleteLayer", "targetIndex": 0, "targetName": "Background" }
+        3. { "type": "ModifyLayer", "targetIndex": 3, "targetName": "My Lineart", "newOpacity": 0.5 }
+        4. { "type": "ModifyLayer", "targetIndex": 1, "targetName": "Layer 1", "newName": "Base Color", "newVisibility": false }
+        5. { "type": "MoveLayer", "targetIndex": 2, "targetName": "Sketch", "direction": "up" }
+        6. { "type": "ModifyLayer", "targetIndex": 4, "targetName": "Lineart", "newLock": true, "newAlphaLock": false, "newClipped": true }
+        7. { "type": "AddFolder", "name": "Head" }
+        8. { "type": "SelectLayer", "targetIndex": 0, "targetName": "layer 1" }
+        9. { "type": "GenerateImage", "prompt": "A highly detailed watercolor painting of a futuristic city", "targetIndex": -1, "targetName": "" }
+
+        CRITICAL RULES FOR GENERATIVE AI:
+        - If the user asks you to literally draw, paint, or generate a picture of something (e.g., "draw a cat", "generate a tree"), you must output a "GenerateImage" action.
+        - Write a highly detailed, descriptive "prompt" optimized for an image generator (like Stable Diffusion or Midjourney).
+        - If the user specifies which layer to draw on, provide the targetIndex/targetName. If they don't, leave them blank and the engine will create a new layer automatically!
+
+        CRITICAL RULES FOR HIERARCHY AND NESTING:
+        - Adding a layer or a folder automatically selects it.
+        - To put layers INSIDE a folder, you must execute "AddLayer" operations immediately after an "AddFolder" operation.
+        - To create a new ROOT folder or a standalone layer afterwards, you MUST use a "SelectLayer" operation to explicitly click back onto the bottom-most root layer BEFORE creating the next folder. Otherwise, folders will nest inside each other forever!
+
+        EXAMPLE OF A PERFECT CHARACTER RIG SEQUENCE:
+        1. { "type": "AddFolder", "name": "Head" }
+        2. { "type": "AddLayer", "name": "Lineart" }
+        3. { "type": "SelectLayer", "targetIndex": 0, "targetName": "layer 1" }
+        4. { "type": "AddFolder", "name": "Body" }
+
+        Note: For MoveLayer, 'direction' must be 'up', 'down', 'top', or 'bottom'.
+        CRITICAL: DO NOT use comments (like //) inside the JSON block. It must be strictly valid JSON.
+        Format your actions exactly wrapped inside a standard json markdown code block.
+        )"
+        + std::string("\nCurrent Canvas State: ") + contextJson.dump();
 
         // 3. Build the message array using the full Chat History
         json messagesArray = json::array();
@@ -69,13 +92,13 @@ public:
         json requestBody = {
             {"model", "local-model"},
             {"messages", messagesArray},
-            {"temperature", 0.4} // Slightly higher temperature allows for more natural conversation
+            {"temperature", 0.2}
         };
 
         // 5. Send the Request
         httplib::Client cli(m_host, m_port);
         cli.set_connection_timeout(5, 0); // 5 second timeout
-        cli.set_read_timeout(15, 0);      // 15 second wait for the AI to type
+        cli.set_read_timeout(120, 0);      // 120 second wait for the AI to type
 
         httplib::Headers headers = {
             {"Content-Type", "application/json"},
@@ -121,15 +144,42 @@ public:
 
                         if (actionObj.contains("newName")) mod.newName = actionObj["newName"].get<std::string>();
                         if (actionObj.contains("newVisibility")) mod.newVisibility = actionObj["newVisibility"].get<bool>();
+                        if (actionObj.contains("newLock")) mod.newLock = actionObj["newLock"].get<bool>();
+                        if (actionObj.contains("newAlphaLock")) mod.newAlphaLock = actionObj["newAlphaLock"].get<bool>();
+                        if (actionObj.contains("newClipped")) mod.newClipped = actionObj["newClipped"].get<bool>();
 
-                        // Opacity might be parsed as an int if it's "1" or "0", so we read it as a float safely
+                        // Opacity might be parsed as an int if it's "1" or "0", so read it as a float
                         if (actionObj.contains("newOpacity")) {
                             mod.newOpacity = actionObj["newOpacity"].is_number_float() ?
                                 actionObj["newOpacity"].get<float>() :
                                 (float)actionObj["newOpacity"].get<int>();
                         }
+                        if (actionObj.contains("newBlendMode")) mod.newBlendMode = actionObj["newBlendMode"].get<std::string>();
 
                         result.actions.push_back(mod);
+                    }
+                    else if (type == "MoveLayer") {
+                        MoveLayerAction move;
+                        if (actionObj.contains("targetIndex")) move.targetIndex = actionObj["targetIndex"].get<int>();
+                        if (actionObj.contains("targetName")) move.targetName = actionObj["targetName"].get<std::string>();
+                        if (actionObj.contains("direction")) move.direction = actionObj["direction"].get<std::string>();
+                        result.actions.push_back(move);
+                    }
+                    else if (type == "AddFolder" && actionObj.contains("name")) {
+                        result.actions.push_back(AddFolderAction{ actionObj["name"] });
+                    }
+                    else if (type == "SelectLayer") {
+                        SelectLayerAction sel;
+                        if (actionObj.contains("targetName")) sel.targetName = actionObj["targetName"].get<std::string>();
+                        if (actionObj.contains("targetIndex")) sel.targetIndex = actionObj["targetIndex"].get<int>();
+                        result.actions.push_back(sel);
+                    }
+                    else if (type == "GenerateImage" && actionObj.contains("prompt")) {
+                        GenerateImageAction gen;
+                        gen.prompt = actionObj["prompt"].get<std::string>();
+                        if (actionObj.contains("targetIndex")) gen.targetIndex = actionObj["targetIndex"].get<int>();
+                        if (actionObj.contains("targetName")) gen.targetName = actionObj["targetName"].get<std::string>();
+                        result.actions.push_back(gen);
                     }
                     };
 

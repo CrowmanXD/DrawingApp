@@ -33,12 +33,17 @@ public:
     void setSoftness(float softness);
     float getSoftness() const;
 
+    void setPenPressure(float pressure) override { m_currentPressure = pressure; }
+
     void setEraser(bool isEraser) { m_isEraser = isEraser; }
     bool isEraser() const { return m_isEraser; }
 
     void onMouseDown(Canvas& canvas, sf::Vector2f position) override;
     void onMouseMove(Canvas& canvas, sf::Vector2f position) override;
     void onMouseUp(Canvas& canvas, sf::Vector2f position) override;
+
+protected: // (Protected so the Eraser/Pen child classes can see it)
+    float m_currentPressure = 1.0f;
 
 private:
     // Create soft brush texture
@@ -65,6 +70,7 @@ private:
     // Stroke tracking
     StrokePoint m_lastPoint;
     bool m_isDrawing = false;
-
     bool m_isEraser = false;
+
+    std::vector<StrokePoint> m_pointBuffer;
 };
