@@ -69,8 +69,15 @@ struct GenerateImageAction {
     std::string targetName = "";
 };
 
-// A strict variant holding only approved operations
-using AIOperation = std::variant<AddLayerAction, DeleteLayerAction, ModifyLayerAction, MoveLayerAction, AddFolderAction, SelectLayerAction, GenerateImageAction>;
+struct EditImageAction {
+    std::string prompt;
+    int sourceIndex = -1;
+    int targetIndex = -1;
+    std::string targetName = "";
+};
+
+// Variant holding only approved operations
+using AIOperation = std::variant<AddLayerAction, DeleteLayerAction, ModifyLayerAction, MoveLayerAction, AddFolderAction, SelectLayerAction, GenerateImageAction, EditImageAction>;
 
 struct AIResponse {
     std::string message;

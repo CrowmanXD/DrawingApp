@@ -6,6 +6,7 @@
 
 #include "imgui.h"
 #include "imgui-SFML.h"
+#include <fstream>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -18,7 +19,28 @@ ImGuiLayer::ImGuiLayer() = default;
 ImGuiLayer::~ImGuiLayer() = default;
 
 void ImGuiLayer::init(sf::RenderWindow& window) {
-    ImGui::SFML::Init(window);
+    // Pass 'false' to stop ImGui from loading the pixel font into Slot 0
+    ImGui::SFML::Init(window, false);
+
+    ImGuiIO& io = ImGui::GetIO();
+    std::string fontPath = "fonts/Roboto-VariableFont_wdth,wght.ttf";
+
+    // Check if the file exists using native C++
+    std::ifstream fontFile(fontPath);
+    if (fontFile.good()) {
+        fontFile.close();
+        // Loads into Slot 0, becoming the global default!
+        io.Fonts->AddFontFromFileTTF(fontPath.c_str(), 16.0f);
+    }
+    else {
+        printf("[GUI WARNING] Failed to find font at: %s. Falling back to default pixel font.\n", fontPath.c_str());
+        // Safe fallback since the automatic initialization is disabled
+        io.Fonts->AddFontDefault();
+    }
+
+    // Bake whichever font is loaded into the GPU texture
+    ImGui::SFML::UpdateFontTexture();
+
     loadIcons();
 }
 
@@ -322,7 +344,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::SameLine();
         if (ImGui::Button("+15° >", ImVec2(55, 0))) rot += 15.f;
 
-        // Wrap the angle so it stays cleanly between -180 and 180
+        // Wrap the angle so it stays between -180 and 180
         if (rot <= -180.f) rot += 360.f;
         if (rot > 180.f) rot -= 360.f;
 
@@ -459,9 +481,15 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         // --- LAYERS PANEL ---
         ImGui::TextDisabled("Layer Stack");
         ImGui::Separator();
-        if (ImGui::Button("New Layer", ImVec2(130, 0))) app.getCanvas().addLayer();
+        if (ImGui::Button("New Layer", ImVec2(130, 0))) {
+            if (app.getToolMode() == 8) app.setToolMode(0); // Force-commit the transform
+            app.getCanvas().addLayer();
+        }
         ImGui::SameLine();
-        if (ImGui::Button("New Folder", ImVec2(130, 0))) app.getCanvas().addFolder();
+        if (ImGui::Button("New Folder", ImVec2(130, 0))) {
+            if (app.getToolMode() == 8) app.setToolMode(0); // Force-commit the transform
+            app.getCanvas().addFolder();
+        }
 
         auto& layers = app.getCanvas().getLayers();
         int activeIdx = app.getCanvas().getActiveLayerIndex();
@@ -515,7 +543,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         }
         ImGui::Separator();
 
-        // We store a paired struct: { layerIndex, visualIndentLevel }
+        // Store a paired struct: { layerIndex, visualIndentLevel }
         std::vector<std::pair<int, int>> uiOrder;
         std::vector<bool> processed(layers.size(), false);
 
@@ -605,12 +633,16 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
             // Draw the invisible Selectable box that captures the click
             if (ImGui::Selectable(selLabel.c_str(), isSelected, ImGuiSelectableFlags_AllowItemOverlap, ImVec2(ImGui::GetContentRegionAvail().x - 30.0f, maxThumbSize))) {
+                if (app.getToolMode() == 8) app.setToolMode(0); // Force-commit the transform
                 app.getCanvas().toggleLayerSelection(i, ImGui::GetIO().KeyCtrl);
             }
 
             // --- RIGHT-CLICK CONTEXT MENU ---
             if (ImGui::BeginPopupContextItem()) {
-                if (!app.getCanvas().isLayerSelected(i)) app.getCanvas().toggleLayerSelection(i, false);
+                if (!app.getCanvas().isLayerSelected(i)) {
+                    if (app.getToolMode() == 8) app.setToolMode(0); // Force-commit the transform
+                    app.getCanvas().toggleLayerSelection(i, false);
+                }
                 const auto& activeSelection = app.getCanvas().getSelectedLayers();
 
                 ImGui::TextDisabled("Layer Actions");
@@ -681,6 +713,8 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("LAYER_DRAG_AND_DROP")) {
                     int draggedIndex = *(const int*)payload->Data;
                     if (draggedIndex != i) {
+                        if (app.getToolMode() == 8) app.setToolMode(0); // Force-commit the transform
+
                         if (layers[i]->type == LayerType::Folder) app.getCanvas().moveToFolder(draggedIndex, i);
                         else app.getCanvas().dropLayerToReorder(draggedIndex, i);
                     }
@@ -777,8 +811,12 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
             ImGui::SameLine();
 
             // Draw Layer Name
-            ImGui::SetCursorPosY(startPos.y + (maxThumbSize - ImGui::GetTextLineHeight()) * 0.5f); // Center text
-            ImGui::Text("%s", layers[i]->name.c_str());
+            std::string label = layers[i]->name;
+            if (label.length() > 14){
+                // Manually truncate the name to 14 characters and add elipses
+                label = label.substr(0, 14) + "...";
+            }
+            ImGui::TextUnformatted(label.c_str());
 
             // Draw [A] if Alpha Locked
             if (layers[i]->alphaLocked) {
@@ -916,10 +954,19 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         ImGui::EndPopup();
     }
 
+    static char domainBuffer[256] = ""; // The buffer for the text input
     // --- SETTINGS MODAL ---
     if (openSettingsModal) {
         ImGui::OpenPopup("App Settings");
         openSettingsModal = false;
+        // Sync the UI buffer with the internal App memory right as the window opens
+            std::string currentDomain = app.getApiDomain();
+#ifdef _MSC_VER
+        strncpy_s(domainBuffer, currentDomain.c_str(), sizeof(domainBuffer) - 1);
+#else
+        strncpy(domainBuffer, currentDomain.c_str(), sizeof(domainBuffer) - 1);
+#endif
+        domainBuffer[sizeof(domainBuffer) - 1] = '\0';
     }
     screenCenter = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(screenCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
@@ -1018,7 +1065,29 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
 
                 ImGui::EndTabItem();
             }
+            // ==========================================
+            // TAB 3: AI SETUP
+            // ==========================================
+            if (ImGui::BeginTabItem("AI Setup")) {
+                ImGui::Spacing();
 
+                ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Cloud GPU Connection");
+                ImGui::Separator(); ImGui::Spacing();
+
+                ImGui::Text("Cloudflare / Ngrok URL:");
+                ImGui::PushItemWidth(-20.0f); // Make the input box stretch to fit
+                if (ImGui::InputText("##ApiDomain", domainBuffer, sizeof(domainBuffer))) {
+                    // Update the application memory dynamically as the user types
+                    app.setApiDomain(domainBuffer);
+                }
+                ImGui::PopItemWidth();
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("Example: random-words.trycloudflare.com");
+                ImGui::TextDisabled("Do not include https:// or trailing slashes.");
+
+                ImGui::EndTabItem();
+            }
             ImGui::EndTabBar();
         }
 

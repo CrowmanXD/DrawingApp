@@ -221,7 +221,7 @@ void Application::processEvents() {
         }
 
         // --- GLOBAL KEYBOARD INTERCEPTOR ---
-		// Placed outside the DrawingEditor state check, so it works in the Main Menu for rebinding shortcuts
+        // Placed outside the DrawingEditor state check, so it works in the Main Menu for rebinding shortcuts
         if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
             if (!m_actionToRebind.empty()) {
                 if (key->code == sf::Keyboard::Key::Escape) {
@@ -244,73 +244,55 @@ void Application::processEvents() {
 
             // Handle keyboard shortcuts
             if (const auto* key = event->getIf<sf::Event::KeyPressed>()) {
+                // Only process canvas shortcuts if the UI isn't actively being typed in
+                if (!m_imgui.wantsCaptureKeyboard()) {
 
-                // --- THE SHORTCUT INTERCEPTOR ---
-                // If a rebind is actively happening, swallow the keypress
-                if (!m_actionToRebind.empty()) {
-                    if (key->code == sf::Keyboard::Key::Escape) {
-                        m_actionToRebind = ""; // Cancel the rebind
+                    // --- PASS TO ACTIVE TOOL ---
+                    m_activeTool->onKeyPress(*m_canvas, key->code);
+
+                    // --- EXECUTE DYNAMIC EDIT SHORTCUTS ---
+                    if (isShortcutPressed("File: Save", key)) {
+                        saveCurrentProject();
                     }
-                    // Ignore raw modifier keys (wait for them to press the actual letter)
-                    else if (key->code != sf::Keyboard::Key::LControl && key->code != sf::Keyboard::Key::RControl &&
-                        key->code != sf::Keyboard::Key::LShift && key->code != sf::Keyboard::Key::RShift &&
-                        key->code != sf::Keyboard::Key::LAlt && key->code != sf::Keyboard::Key::RAlt &&
-                        key->code != sf::Keyboard::Key::Unknown) {
-
-                        // Save the exact combo and end the listening state
-                        m_shortcuts[m_actionToRebind] = { key->code, key->control, key->shift, key->alt };
-                        m_actionToRebind = "";
+                    else if (isShortcutPressed("Edit: Undo", key)) {
+                        if (m_currentToolMode == 8 && m_transformTool.isActive()) m_transformTool.onKeyPress(*m_canvas, sf::Keyboard::Key::Escape);
+                        else m_canvas->undo();
                     }
-                    continue; // Stop the rest of the engine from processing this key
-                }
+                    else if (isShortcutPressed("Edit: Redo", key)) {
+                        if (m_currentToolMode != 8 || !m_transformTool.isActive()) m_canvas->redo();
+                    }
+                    else if (isShortcutPressed("Edit: Paste", key)) {
+                        sf::Image clipboardImg = ClipboardHelper::getImage();
+                        if (clipboardImg.getSize().x > 0) m_canvas->importFromImage(clipboardImg, "Pasted Layer");
+                    }
+                    else if (isShortcutPressed("Edit: Copy", key)) m_canvas->copyToClipboard();
+                    else if (isShortcutPressed("Edit: Cut", key)) m_canvas->cutToClipboard();
+                    else if (isShortcutPressed("Image: Mirror", key)) {
+                        if (m_currentToolMode != 8 || !m_transformTool.isActive()) m_canvas->flipCanvasHorizontal();
+                    }
+                    else if (isShortcutPressed("Tool: Toggle Eraser", key)) {
+                        setEraser(!isEraser());
+                    }
+                    else if (isShortcutPressed("View: Zoom In", key)) {
+                        m_zoom = std::clamp(m_zoom * 1.1f, 0.1f, 10.0f);
+                    }
+                    else if (isShortcutPressed("View: Zoom Out", key)) {
+                        m_zoom = std::clamp(m_zoom / 1.1f, 0.1f, 10.0f);
+                    }
+                    else if (isShortcutPressed("Brush: Increase Size", key)) {
+                        float size = getBrushSize();
+                        // Stepped math: Increase by 5 if big, 2 if medium, 1 if small
+                        float inc = (size >= 20.f) ? 5.f : ((size >= 5.f) ? 2.f : 1.f);
+                        setBrushSize(std::min(100.f, size + inc));
+                    }
+                    else if (isShortcutPressed("Brush: Decrease Size", key)) {
+                        float size = getBrushSize();
+                        // Stepped math: Decrease by 5 if big, 2 if medium, 1 if small
+                        float dec = (size > 20.f) ? 5.f : ((size > 5.f) ? 2.f : 1.f);
+                        setBrushSize(std::max(1.f, size - dec));
+                    }
 
-                // --- PASS TO ACTIVE TOOL ---
-                m_activeTool->onKeyPress(*m_canvas, key->code);
-
-                // --- EXECUTE DYNAMIC EDIT SHORTCUTS ---
-                if (isShortcutPressed("File: Save", key)) {
-                    saveCurrentProject();
-                }
-                else if (isShortcutPressed("Edit: Undo", key)) {
-                    if (m_currentToolMode == 8 && m_transformTool.isActive()) m_transformTool.onKeyPress(*m_canvas, sf::Keyboard::Key::Escape);
-                    else m_canvas->undo();
-                }
-                else if (isShortcutPressed("Edit: Redo", key)) {
-                    if (m_currentToolMode != 8 || !m_transformTool.isActive()) m_canvas->redo();
-                }
-                else if (isShortcutPressed("Edit: Paste", key)) {
-                    sf::Image clipboardImg = ClipboardHelper::getImage();
-                    if (clipboardImg.getSize().x > 0) m_canvas->importFromImage(clipboardImg, "Pasted Layer");
-                }
-                else if (isShortcutPressed("Edit: Copy", key)) m_canvas->copyToClipboard();
-                else if (isShortcutPressed("Edit: Cut", key)) m_canvas->cutToClipboard();
-                else if (isShortcutPressed("Image: Mirror", key)) {
-                    if (m_currentToolMode != 8 || !m_transformTool.isActive()) m_canvas->flipCanvasHorizontal();
-                }
-                else if (isShortcutPressed("Tool: Toggle Eraser", key)) {
-                    setEraser(!isEraser());
-                }
-                else if (isShortcutPressed("View: Zoom In", key)) {
-                    m_zoom = std::clamp(m_zoom * 1.1f, 0.1f, 10.0f);
-                }
-                else if (isShortcutPressed("View: Zoom Out", key)) {
-                    m_zoom = std::clamp(m_zoom / 1.1f, 0.1f, 10.0f);
-                }
-                else if (isShortcutPressed("Brush: Increase Size", key)) {
-                    float size = getBrushSize();
-                    // Stepped math: Increase by 5 if big, 2 if medium, 1 if small
-                    float inc = (size >= 20.f) ? 5.f : ((size >= 5.f) ? 2.f : 1.f);
-                    setBrushSize(std::min(100.f, size + inc));
-                }
-                else if (isShortcutPressed("Brush: Decrease Size", key)) {
-                    float size = getBrushSize();
-                    // Stepped math: Decrease by 5 if big, 2 if medium, 1 if small
-                    float dec = (size > 20.f) ? 5.f : ((size > 5.f) ? 2.f : 1.f);
-                    setBrushSize(std::max(1.f, size - dec));
-                }
-
-                // --- DYNAMIC TOOL SELECTION SHORTCUTS ---
-                if (!m_imgui.wantsCaptureKeyboard()) { // Don't change tools while typing layer names
+                    // --- DYNAMIC TOOL SELECTION SHORTCUTS ---
                     if (isShortcutPressed("Tool: Brush", key)) setToolMode(0);
                     else if (isShortcutPressed("Tool: Rect Select", key)) setToolMode(1);
                     else if (isShortcutPressed("Tool: Sel. Brush", key)) setToolMode(2);
@@ -751,6 +733,7 @@ void Application::saveSettings() {
             << pair.second.shift << "|"
             << pair.second.alt << "\n";
     }
+    file << "ApiDomain=" << m_apiDomain << "\n";
 }
 
 void Application::loadSettings() {
@@ -773,6 +756,9 @@ void Application::loadSettings() {
             }
             else if (key == "PressureCurve") {
                 m_pressureCurve = std::stof(val);
+            }
+            else if (key == "ApiDomain") {
+                m_apiDomain = val;
             }
             else if (key == "Shortcut") {
                 // Parse the format: Action Name|Key|Ctrl|Shift|Alt
@@ -799,4 +785,12 @@ void Application::loadSettings() {
             continue;
         }
     }
+}
+
+std::string Application::getApiDomain() const { 
+    return m_apiDomain; 
+}
+
+void Application::setApiDomain(const std::string& domain) { 
+    m_apiDomain = domain; 
 }

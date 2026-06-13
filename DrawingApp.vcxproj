@@ -29,26 +29,26 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>true</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
@@ -128,41 +128,86 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Application.cpp" />
-    <ClCompile Include="Bezier.cpp" />
-    <ClCompile Include="Brush.cpp" />
+    <ClCompile Include="AssistantController.cpp" />
+    <ClCompile Include="BrushDynamics.cpp" />
     <ClCompile Include="BrushTool.cpp" />
     <ClCompile Include="Canvas.cpp" />
-    <ClCompile Include="EraserTools.cpp" />
+    <ClCompile Include="ClipboardHelper.cpp" />
+    <ClCompile Include="ColorPickerTool.cpp" />
+    <ClCompile Include="CropTool.cpp" />
+    <ClCompile Include="DabCompositor.cpp" />
+    <ClCompile Include="DabScheduler.cpp" />
+    <ClCompile Include="FileDialogs.cpp" />
+    <ClCompile Include="FreehandSelectTool.cpp" />
     <ClCompile Include="ImGuiLayer.cpp" />
+    <ClCompile Include="LayerUndoCommands.cpp" />
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="Stroke.cpp" />
+    <ClCompile Include="PaintBucketTool.cpp" />
+    <ClCompile Include="ParameterInfluence.cpp" />
+    <ClCompile Include="PathStabilizer.cpp" />
+    <ClCompile Include="RectSelectTool.cpp" />
+    <ClCompile Include="SelectionBrushTool.cpp" />
+    <ClCompile Include="SelectionUndoCommand.cpp" />
+    <ClCompile Include="ShapeTool.cpp" />
     <ClCompile Include="StrokeUndoCommand.cpp" />
-    <ClCompile Include="Tile.cpp" />
-    <ClCompile Include="TileGrid.cpp" />
     <ClCompile Include="Tool.cpp" />
-    <ClCompile Include="ToolPanel.cpp" />
-    <ClCompile Include="UndoCommand.cpp" />
+    <ClCompile Include="TransformTool.cpp" />
     <ClCompile Include="UndoStack.cpp" />
+    <ClCompile Include="VectorPenTool.cpp" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="CMakeLists.txt" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Application.h" />
-    <ClInclude Include="Bezier.h" />
-    <ClInclude Include="Brush.h" />
+    <ClInclude Include="AppState.h" />
+    <ClInclude Include="AssistantController.h" />
+    <ClInclude Include="Base64Codec.h" />
+    <ClInclude Include="BlendModeUtils.h" />
+    <ClInclude Include="BrushDynamics.h" />
     <ClInclude Include="BrushTool.h" />
     <ClInclude Include="Canvas.h" />
-    <ClInclude Include="EraserTool.h" />
+    <ClInclude Include="ClipboardHelper.h" />
+    <ClInclude Include="ColorPickerTool.h" />
+    <ClInclude Include="ConfigManager.h" />
+    <ClInclude Include="CropTool.h" />
+    <ClInclude Include="Dab.h" />
+    <ClInclude Include="DabCompositor.h" />
+    <ClInclude Include="DabScheduler.h" />
+    <ClInclude Include="FileDialogs.h" />
+    <ClInclude Include="FreehandSelectTool.h" />
+    <ClInclude Include="HttpClient.h" />
+    <ClInclude Include="httplib.h" />
     <ClInclude Include="ImGuiLayer.h" />
-    <ClInclude Include="Stroke.h" />
+    <ClInclude Include="json.hpp" />
+    <ClInclude Include="LayerUndoCommands.h" />
+    <ClInclude Include="LLMAssistant.h" />
+    <ClInclude Include="MockAssistant.h" />
+    <ClInclude Include="PaintBucketTool.h" />
+    <ClInclude Include="ParameterInfluence.h" />
+    <ClInclude Include="PathStabilizer.h" />
+    <ClInclude Include="RectSelectTool.h" />
+    <ClInclude Include="SelectionBrushTool.h" />
+    <ClInclude Include="SelectionUndoCommand.h" />
+    <ClInclude Include="ShapeTool.h" />
+    <ClInclude Include="StringUtils.h" />
+    <ClInclude Include="StrokePoint.h" />
     <ClInclude Include="StrokeUndoCommand.h" />
     <ClInclude Include="Tile.h" />
     <ClInclude Include="TileGrid.h" />
     <ClInclude Include="Tool.h" />
-    <ClInclude Include="ToolPanel.h" />
+    <ClInclude Include="TransformTool.h" />
     <ClInclude Include="UndoCommand.h" />
     <ClInclude Include="UndoStack.h" />
+    <ClInclude Include="VectorPenTool.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="COMPLETION_CHECKLIST.md" />
+    <None Include="CRITICAL_FIXES_SUMMARY.md" />
+    <None Include="EXECUTIVE_SUMMARY.md" />
+    <None Include="INDEX.md" />
+    <None Include="QUICK_REFERENCE.md" />
+    <None Include="REMAINING_SMELLS_ROADMAP.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

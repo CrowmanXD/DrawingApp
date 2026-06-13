@@ -22,9 +22,6 @@
     <Filter Include="Source Files\ui">
       <UniqueIdentifier>{bae23edc-084f-4fd3-86e0-ed41ecc29aa5}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\math">
-      <UniqueIdentifier>{df43e172-c277-40a5-afc0-fda6e043b1c4}</UniqueIdentifier>
-    </Filter>
     <Filter Include="external">
       <UniqueIdentifier>{dcec8f70-1fe1-4c0d-aa2e-39a0a1f19784}</UniqueIdentifier>
     </Filter>
@@ -40,8 +37,11 @@
     <Filter Include="Header Files\ui">
       <UniqueIdentifier>{1f091001-1aea-4d62-98e4-51580ef52ee4}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Header Files\math">
-      <UniqueIdentifier>{a1a4be65-c241-4cb2-b938-05546db289ff}</UniqueIdentifier>
+    <Filter Include="Header Files\AI">
+      <UniqueIdentifier>{19b98cba-efd1-4356-9361-12d33c1060e7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\AI">
+      <UniqueIdentifier>{3a1f13cc-67bf-4017-91a0-6938f0634841}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -51,17 +51,8 @@
     <ClCompile Include="Application.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
-    <ClCompile Include="Brush.cpp">
-      <Filter>Source Files\core</Filter>
-    </ClCompile>
     <ClCompile Include="Canvas.cpp">
       <Filter>Source Files\core</Filter>
-    </ClCompile>
-    <ClCompile Include="Stroke.cpp">
-      <Filter>Source Files\core</Filter>
-    </ClCompile>
-    <ClCompile Include="Bezier.cpp">
-      <Filter>Source Files\math</Filter>
     </ClCompile>
     <ClCompile Include="Tool.cpp">
       <Filter>Source Files\tools</Filter>
@@ -69,29 +60,71 @@
     <ClCompile Include="BrushTool.cpp">
       <Filter>Source Files\tools</Filter>
     </ClCompile>
-    <ClCompile Include="EraserTools.cpp">
-      <Filter>Source Files\tools</Filter>
-    </ClCompile>
     <ClCompile Include="ImGuiLayer.cpp">
       <Filter>Source Files\ui</Filter>
-    </ClCompile>
-    <ClCompile Include="ToolPanel.cpp">
-      <Filter>Source Files\ui</Filter>
-    </ClCompile>
-    <ClCompile Include="TileGrid.cpp">
-      <Filter>Source Files\core</Filter>
-    </ClCompile>
-    <ClCompile Include="Tile.cpp">
-      <Filter>Source Files\core</Filter>
-    </ClCompile>
-    <ClCompile Include="UndoCommand.cpp">
-      <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="UndoStack.cpp">
       <Filter>Source Files\core</Filter>
     </ClCompile>
     <ClCompile Include="StrokeUndoCommand.cpp">
       <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="BrushDynamics.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="DabCompositor.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="DabScheduler.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="ParameterInfluence.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="PathStabilizer.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="LayerUndoCommands.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="FileDialogs.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="RectSelectTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="SelectionBrushTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="ClipboardHelper.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="AssistantController.cpp">
+      <Filter>Source Files\AI</Filter>
+    </ClCompile>
+    <ClCompile Include="SelectionUndoCommand.cpp">
+      <Filter>Source Files\core</Filter>
+    </ClCompile>
+    <ClCompile Include="VectorPenTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="FreehandSelectTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="PaintBucketTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="ShapeTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="CropTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="TransformTool.cpp">
+      <Filter>Source Files\tools</Filter>
+    </ClCompile>
+    <ClCompile Include="ColorPickerTool.cpp">
+      <Filter>Source Files\tools</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -104,29 +137,14 @@
     <ClInclude Include="Canvas.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
-    <ClInclude Include="Brush.h">
-      <Filter>Header Files\core</Filter>
-    </ClInclude>
-    <ClInclude Include="Stroke.h">
-      <Filter>Header Files\core</Filter>
-    </ClInclude>
     <ClInclude Include="Tool.h">
       <Filter>Header Files\tools</Filter>
     </ClInclude>
     <ClInclude Include="BrushTool.h">
       <Filter>Header Files\tools</Filter>
     </ClInclude>
-    <ClInclude Include="EraserTool.h">
-      <Filter>Header Files\tools</Filter>
-    </ClInclude>
     <ClInclude Include="ImGuiLayer.h">
       <Filter>Header Files\ui</Filter>
-    </ClInclude>
-    <ClInclude Include="ToolPanel.h">
-      <Filter>Header Files\ui</Filter>
-    </ClInclude>
-    <ClInclude Include="Bezier.h">
-      <Filter>Header Files\math</Filter>
     </ClInclude>
     <ClInclude Include="Tile.h">
       <Filter>Header Files\core</Filter>
@@ -143,5 +161,106 @@
     <ClInclude Include="StrokeUndoCommand.h">
       <Filter>Header Files\core</Filter>
     </ClInclude>
+    <ClInclude Include="BrushDynamics.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="Dab.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="DabCompositor.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="DabScheduler.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="ParameterInfluence.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="PathStabilizer.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="StrokePoint.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="AppState.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="LayerUndoCommands.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="FileDialogs.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="RectSelectTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="SelectionBrushTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="ClipboardHelper.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="AssistantController.h">
+      <Filter>Header Files\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="MockAssistant.h">
+      <Filter>Header Files\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="json.hpp">
+      <Filter>Source Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="httplib.h">
+      <Filter>Source Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="LLMAssistant.h">
+      <Filter>Header Files\AI</Filter>
+    </ClInclude>
+    <ClInclude Include="SelectionUndoCommand.h">
+      <Filter>Header Files\core</Filter>
+    </ClInclude>
+    <ClInclude Include="VectorPenTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="FreehandSelectTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="PaintBucketTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="ShapeTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="CropTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="TransformTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="ColorPickerTool.h">
+      <Filter>Header Files\tools</Filter>
+    </ClInclude>
+    <ClInclude Include="StringUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ConfigManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Base64Codec.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BlendModeUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="HttpClient.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="CRITICAL_FIXES_SUMMARY.md" />
+    <None Include="REMAINING_SMELLS_ROADMAP.md" />
+    <None Include="QUICK_REFERENCE.md" />
+    <None Include="COMPLETION_CHECKLIST.md" />
+    <None Include="EXECUTIVE_SUMMARY.md" />
+    <None Include="INDEX.md" />
   </ItemGroup>
 </Project>

@@ -147,6 +147,11 @@ public:
     bool saveProject(const std::string& filename);
     bool loadProject(const std::string& filename);
 
+    /// Validate layer index bounds
+    bool isValidLayerIndex(int index) const {
+        return index >= 0 && index < static_cast<int>(m_layers.size());
+    }
+
 private:
     sf::Vector2u m_size;
     std::vector<std::unique_ptr<Layer>> m_layers;

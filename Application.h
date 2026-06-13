@@ -77,10 +77,13 @@ public:
     bool saveProjectAs();
     void loadSettings();
     void saveSettings();
+    std::string getApiDomain() const;
+    void setApiDomain(const std::string& domain);
     void initiateExit();
     void forceExit();
     void cancelExit();
     bool shouldShowExitWarning() const { return m_showExitWarning; }
+
     int getTheme() const { return m_theme; }
     void setTheme(int theme) { m_theme = theme; }
 
@@ -103,6 +106,7 @@ private:
     std::string m_actionToRebind = "";
     std::string m_currentFilePath = "";
     bool m_showExitWarning = false;
+    std::string m_apiDomain = "fallback.trycloudflare.com";
 
     float m_zoom = 1.0f;
     sf::Vector2f m_pan = { 0.f, 0.f };

@@ -40,8 +40,8 @@ public:
 
         // 2. A hybrid System Prompt
         std::string systemPrompt = R"(
-        You are a helpful AI co-pilot in a digital drawing app. You can chat normally, answer questions, and greet the user.
-        HOWEVER, if the user asks you to modify the canvas (like adding, deleting or modifying a layer), you must include a JSON block in your response containing the actions.
+        You are the core routing engine for a C++ digital art application. You can chat normally, answer questions, and greet the user.
+        HOWEVER, if the user asks you to modify the canvas (like adding, deleting or modifying a layer), you must include a strictly valid JSON block in your response containing the actions.
 
         CRITICAL RULE FOR EXISTING LAYERS:
         ALWAYS use BOTH "targetIndex" and "targetName" when modifying, moving, or deleting existing layers. You MUST use the exact 'targetIndex' integer provided in the Current Canvas State. This guarantees you target the exact layer since multiple layers can share the exact same name!
@@ -56,11 +56,17 @@ public:
         7. { "type": "AddFolder", "name": "Head" }
         8. { "type": "SelectLayer", "targetIndex": 0, "targetName": "layer 1" }
         9. { "type": "GenerateImage", "prompt": "A highly detailed watercolor painting of a futuristic city", "targetIndex": -1, "targetName": "" }
+        10. { "type": "EditImage", "prompt": "make it winter", "sourceIndex": 0 }
 
-        CRITICAL RULES FOR GENERATIVE AI:
-        - If the user asks you to literally draw, paint, or generate a picture of something (e.g., "draw a cat", "generate a tree"), you must output a "GenerateImage" action.
-        - Write a highly detailed, descriptive "prompt" optimized for an image generator (like Stable Diffusion or Midjourney).
-        - If the user specifies which layer to draw on, provide the targetIndex/targetName. If they don't, leave them blank and the engine will create a new layer automatically!
+        CRITICAL RULES FOR "EditImage" AND "GenerateImage" (PREVENT LOSSY SUMMARIZATION):
+        1. DO NOT SUMMARIZE. The 'prompt' field is piped directly into a Stable Diffusion engine. 
+        2. You MUST retain all visual subjects, styles, lighting, and descriptive keywords.
+        3. TRANSLATE COMMANDS INTO DESCRIPTIONS. Image generators do not understand instructions. 
+           If the user says: "make the mountainscape nighttime"
+           You MUST rewrite the prompt as: "A mountainscape at night, dark sky, moonlight"
+           If the user says: "turn this sketch into a realistic knight"
+           You MUST rewrite the prompt as: "A realistic photo of a medieval knight, highly detailed"
+        4. Provide the precise 'sourceIndex' of the layer they want to edit. If they don't specify, use the active layer index.
 
         CRITICAL RULES FOR HIERARCHY AND NESTING:
         - Adding a layer or a folder automatically selects it.
@@ -77,7 +83,7 @@ public:
         CRITICAL: DO NOT use comments (like //) inside the JSON block. It must be strictly valid JSON.
         Format your actions exactly wrapped inside a standard json markdown code block.
         )"
-        + std::string("\nCurrent Canvas State: ") + contextJson.dump();
+            + std::string("\nCurrent Canvas State: ") + contextJson.dump();
 
         // 3. Build the message array using the full Chat History
         json messagesArray = json::array();
@@ -180,6 +186,14 @@ public:
                         if (actionObj.contains("targetIndex")) gen.targetIndex = actionObj["targetIndex"].get<int>();
                         if (actionObj.contains("targetName")) gen.targetName = actionObj["targetName"].get<std::string>();
                         result.actions.push_back(gen);
+                    }
+                    else if (type == "EditImage" && actionObj.contains("prompt")) {
+                        EditImageAction edit;
+                        edit.prompt = actionObj["prompt"].get<std::string>();
+                        if (actionObj.contains("sourceIndex")) edit.sourceIndex = actionObj["sourceIndex"].get<int>();
+                        if (actionObj.contains("targetIndex")) edit.targetIndex = actionObj["targetIndex"].get<int>();
+                        if (actionObj.contains("targetName")) edit.targetName = actionObj["targetName"].get<std::string>();
+                        result.actions.push_back(edit);
                     }
                     };
 
