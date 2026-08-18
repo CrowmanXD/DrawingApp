@@ -12,9 +12,14 @@
 #include <cstdio>
 #include <chrono>
 
-AssistantController::AssistantController(Canvas& canvas) : m_canvas(canvas) {}
+AssistantController::AssistantController(Canvas& canvas) : m_canvas(canvas) {
+    // Controller is created
+    m_isAlive = std::make_shared<std::atomic<bool>>(true);
+}
 
 AssistantController::~AssistantController() {
+    // Controller is being destroyed, flip the token so detached threads know to abort
+    *m_isAlive = false;
     if (m_workerThread.joinable()) {
         m_workerThread.join();
     }
@@ -55,7 +60,7 @@ void AssistantController::requestAIHelp(const std::string& prompt) {
     if (m_state.load() == AssistantState::Thinking) return;
     if (!m_backend) return;
 
-    // --- ADD TO CHAT HISTORY FIRST ---
+    // Add to chat history first
     m_chatHistory.push_back({ "You", prompt });
 
     AssistantContext contextSnapshot = buildContextSnapshot();
@@ -87,7 +92,7 @@ void AssistantController::requestAIHelp(const std::string& prompt) {
             m_lastError = e.what();
             m_state.store(AssistantState::Error);
         }
-        });
+    });
 }
 
 void AssistantController::processPendingActions() {
@@ -152,352 +157,358 @@ void AssistantController::processPendingActions() {
 }
 
 void AssistantController::executeAction(const AIOperation& op) {
-    // std::visit unpacks the variant based on its type
-    std::visit([this](auto&& arg) {
-        using T = std::decay_t<decltype(arg)>;
+    // std::visit unpacks the variant and routes to the matching handler
+    struct Dispatcher {
+        AssistantController* self;
+        void operator()(const AddLayerAction& arg) const { self->handleAddLayerAction(arg); }
+        void operator()(const DeleteLayerAction& arg) const { self->handleDeleteLayerAction(arg); }
+        void operator()(const ModifyLayerAction& arg) const { self->handleModifyLayerAction(arg); }
+        void operator()(const MoveLayerAction& arg) const { self->handleMoveLayerAction(arg); }
+        void operator()(const AddFolderAction& arg) const { self->handleAddFolderAction(arg); }
+        void operator()(const SelectLayerAction& arg) const { self->handleSelectLayerAction(arg); }
+        void operator()(const GenerateImageAction& arg) const { self->handleGenerateImageAction(arg); }
+        void operator()(const EditImageAction& arg) const { self->handleEditImageAction(arg); }
+    };
+    std::visit(Dispatcher{this}, op);
+}
 
-        if constexpr (std::is_same_v<T, AddLayerAction>) {
-            m_canvas.addLayer();
-            if (auto* layer = m_canvas.getActiveLayer()) {
-                layer->name = arg.name;
+// Resolves a target layer index from the AI-provided index and/or name, with safety checks to prevent hallucinated indices.
+std::vector<int> AssistantController::resolveLayerIndices(int providedIndex, const std::string& providedName) {
+    auto& layers = m_canvas.getLayers();
+    std::vector<int> targetIndices;
+
+    bool exactIndexValid = false;
+    std::string safeName = StringUtils::toLower(providedName);
+
+    // Cross-validate the index
+    if (providedIndex >= 0 && providedIndex < layers.size()) {
+        if (providedName.empty()) {
+            exactIndexValid = true; // No name provided, trust the index
+        }
+        else {
+            std::string actualName = StringUtils::toLower(layers[providedIndex]->name);
+
+            if (actualName.find(safeName) != std::string::npos || safeName.find(actualName) != std::string::npos) {
+                exactIndexValid = true;
+            }
+            else {
+                printf("[AI WARNING] Index Hallucination! Index %d is '%s', not '%s'. Falling back to name search.\n",
+                    providedIndex, layers[providedIndex]->name.c_str(), providedName.c_str());
             }
         }
-        else if constexpr (std::is_same_v<T, DeleteLayerAction>) {
-            m_canvas.deleteLayer(arg.targetIndex);
-        }
-        else if constexpr (std::is_same_v<T, ModifyLayerAction>) {
-            auto& layers = m_canvas.getLayers();
-            std::vector<int> targetIndices;
+    }
 
-            // Try to use the exact index if the AI provided it
-            if (arg.targetIndex >= 0 && arg.targetIndex < layers.size()) {
-                targetIndices.push_back(arg.targetIndex);
-            }
-            // If no index, find ALL layers that match the name
-            else if (!arg.targetName.empty()) {
-                std::string safeTarget = StringUtils::toLower(arg.targetName);
-                for (int i = 0; i < layers.size(); ++i) {
-                    std::string lowerLayerName = StringUtils::toLower(layers[i]->name);
-                    if (lowerLayerName.find(safeTarget) != std::string::npos ||
-                        safeTarget.find(lowerLayerName) != std::string::npos) {
-                        targetIndices.push_back(i);
-                    }
-                }
-            }
-
-            // Apply modifications to all found layers safely
-            for (int realIndex : targetIndices) {
-                bool oldVis = layers[realIndex]->visible;
-                float oldOp = layers[realIndex]->opacity;
-                int oldMode = static_cast<int>(layers[realIndex]->blendMode);
-                bool oldLock = layers[realIndex]->isLocked;
-                bool oldAlpha = layers[realIndex]->alphaLocked;
-                bool oldClip = layers[realIndex]->isClipped;
-                std::string oldName = layers[realIndex]->name;
-
-                // Only push to the Undo stack if the value actually changed
-                if (arg.newName.has_value() && arg.newName.value() != oldName) {
-                    m_canvas.setLayerName(realIndex, arg.newName.value());
-                    m_canvas.pushUndoCommand(std::make_unique<RenameLayerCommand>(realIndex, oldName, arg.newName.value()));
-                }
-                if (arg.newOpacity.has_value()) {
-                    float newOp = std::clamp(arg.newOpacity.value(), 0.0f, 1.0f);
-                    if (newOp != oldOp) {
-                        m_canvas.setLayerOpacity(realIndex, newOp);
-                        m_canvas.pushUndoCommand(std::make_unique<OpacityChangeCommand>(realIndex, oldOp, newOp));
-                    }
-                }
-                if (arg.newVisibility.has_value() && arg.newVisibility.value() != oldVis) {
-                    m_canvas.setLayerVisibility(realIndex, arg.newVisibility.value());
-                    m_canvas.pushUndoCommand(std::make_unique<VisibilityChangeCommand>(realIndex, oldVis, arg.newVisibility.value()));
-                }
-                if (arg.newBlendMode.has_value()) {
-                    LayerBlendMode newBlendMode = BlendModeUtils::fromString(arg.newBlendMode.value());
-                    int newMode = BlendModeUtils::toInt(newBlendMode);
-                    int oldMode = static_cast<int>(layers[realIndex]->blendMode);
-
-                    if (newMode != oldMode) {
-                        m_canvas.setLayerBlendMode(realIndex, newMode);
-                        m_canvas.pushUndoCommand(std::make_unique<BlendModeChangeCommand>(realIndex, oldMode, newMode));
-                    }
-                }
-                if (arg.newLock.has_value()) {
-                    bool newLock = arg.newLock.value();
-                    layers[realIndex]->isLocked = newLock;
-                }
-
-                if (arg.newAlphaLock.has_value()) {
-                    bool newAlphaLock = arg.newAlphaLock.value();
-                    layers[realIndex]->alphaLocked = newAlphaLock;
-                }
-
-                if (arg.newClipped.has_value()) {
-                    bool newClipped = arg.newClipped.value();
-                    layers[realIndex]->isClipped = newClipped;
-                }
+    // Route the targeting safely
+    if (exactIndexValid) {
+        targetIndices.push_back(providedIndex);
+    }
+    else if (!providedName.empty()) {
+        // Fallback: Search all layers for the targetName
+        for (int i = 0; i < layers.size(); ++i) {
+            std::string lowerLayerName = StringUtils::toLower(layers[i]->name);
+            if (lowerLayerName.find(safeName) != std::string::npos || safeName.find(lowerLayerName) != std::string::npos) {
+                targetIndices.push_back(i);
             }
         }
-        else if constexpr (std::is_same_v<T, MoveLayerAction>) {
-            auto& layers = m_canvas.getLayers();
-            int targetIdx = -1;
+    }
 
-            if (arg.targetIndex >= 0 && arg.targetIndex < layers.size()) {
-                targetIdx = arg.targetIndex;
-            }
-            else if (!arg.targetName.empty()) {
-                std::string safeTarget = StringUtils::toLower(arg.targetName);
-                for (int i = 0; i < layers.size(); ++i) {
-                    if (StringUtils::toLower(layers[i]->name).find(safeTarget) != std::string::npos) {
-                        targetIdx = i; break;
-                    }
-                }
-            }
+    return targetIndices;
+}
 
-            if (targetIdx != -1) {
-                int destIdx = targetIdx;
-                std::string dir = StringUtils::toLower(arg.direction);
+// Creates a new layer and assigns the AI-provided name
+void AssistantController::handleAddLayerAction(const AddLayerAction& arg) {
+    m_canvas.addLayer();
+    if (auto* layer = m_canvas.getActiveLayer()) {
+        layer->name = arg.name;
+    }
+}
 
-                if (dir == "up" && targetIdx < layers.size() - 1) destIdx = targetIdx + 1;
-                else if (dir == "down" && targetIdx > 0) destIdx = targetIdx - 1;
-                else if (dir == "top") destIdx = layers.size() - 1;
-                else if (dir == "bottom") destIdx = 0;
+// Removes a layer by its exact index
+void AssistantController::handleDeleteLayerAction(const DeleteLayerAction& arg) {
+    m_canvas.deleteLayer(arg.targetIndex);
+}
 
-                if (targetIdx != destIdx) m_canvas.dropLayerToReorder(targetIdx, destIdx);
+// Applies property changes (name, opacity, visibility, blend mode, lock states) to all matching layers.
+// Each change that actually modifies state pushes an undo command so the user can revert it.
+void AssistantController::handleModifyLayerAction(const ModifyLayerAction& arg) {
+    auto& layers = m_canvas.getLayers();
+
+    std::vector<int> targetIndices = resolveLayerIndices(arg.targetIndex, arg.targetName);
+    if (targetIndices.empty()) return;
+
+    targetIndices.reserve(layers.size());
+    for (int realIndex : targetIndices) {
+        bool oldVis = layers[realIndex]->visible;
+        float oldOp = layers[realIndex]->opacity;
+        bool oldLock = layers[realIndex]->isLocked;
+        bool oldAlpha = layers[realIndex]->alphaLocked;
+        bool oldClip = layers[realIndex]->isClipped;
+        std::string oldName = layers[realIndex]->name;
+
+        if (arg.newName.has_value() && arg.newName.value() != oldName) {
+            m_canvas.setLayerName(realIndex, arg.newName.value());
+            m_canvas.pushUndoCommand(std::make_unique<RenameLayerCommand>(realIndex, oldName, arg.newName.value()));
+        }
+        if (arg.newOpacity.has_value()) {
+            float newOp = std::clamp(arg.newOpacity.value(), 0.0f, 1.0f);
+            if (newOp != oldOp) {
+                m_canvas.setLayerOpacity(realIndex, newOp);
+                m_canvas.pushUndoCommand(std::make_unique<OpacityChangeCommand>(realIndex, oldOp, newOp));
             }
         }
-        else if constexpr (std::is_same_v<T, AddFolderAction>) {
-            m_canvas.addFolder();
-            // Automatically rename the newly created folder
-            m_canvas.getLayers()[m_canvas.getActiveLayerIndex()]->name = arg.name;
+        if (arg.newVisibility.has_value() && arg.newVisibility.value() != oldVis) {
+            m_canvas.setLayerVisibility(realIndex, arg.newVisibility.value());
+            m_canvas.pushUndoCommand(std::make_unique<VisibilityChangeCommand>(realIndex, oldVis, arg.newVisibility.value()));
         }
-        else if constexpr (std::is_same_v<T, SelectLayerAction>) {
-            int targetIdx = -1;
+        if (arg.newBlendMode.has_value()) {
+            LayerBlendMode newBlendMode = BlendModeUtils::fromString(arg.newBlendMode.value());
+            int newMode = BlendModeUtils::toInt(newBlendMode);
+            int oldModeVal = static_cast<int>(layers[realIndex]->blendMode);
 
-            // Try to select by exact Index first
-            if (arg.targetIndex.has_value()) {
-                targetIdx = arg.targetIndex.value();
-            }
-            // Fallback to searching by Layer Name (Case-Insensitive)
-            else if (arg.targetName.has_value()) {
-                std::string safeTarget = StringUtils::toLower(arg.targetName.value());
-                const auto& layers = m_canvas.getLayers();
-
-                for (int i = 0; i < layers.size(); i++) {
-                    if (StringUtils::toLower(layers[i]->name) == safeTarget) {
-                        targetIdx = i;
-                        break;
-                    }
-                }
-            }
-
-            // Apply the selection so the AI can jump out of folders
-            if (targetIdx >= 0 && targetIdx < m_canvas.getLayers().size()) {
-                m_canvas.setActiveLayer(targetIdx);
+            if (newMode != oldModeVal) {
+                m_canvas.setLayerBlendMode(realIndex, newMode);
+                m_canvas.pushUndoCommand(std::make_unique<BlendModeChangeCommand>(realIndex, oldModeVal, newMode));
             }
         }
-        else if constexpr (std::is_same_v<T, GenerateImageAction>) {
-            auto& layers = m_canvas.getLayers();
-            int targetIdx = -1;
+        if (arg.newLock.has_value()) {
+            bool newLock = arg.newLock.value();
+            layers[realIndex]->isLocked = newLock;
+        }
 
-            // Resolve the Target Layer
-            if (arg.targetIndex >= 0 && arg.targetIndex < layers.size()) {
-                targetIdx = arg.targetIndex;
-            }
-            else if (!arg.targetName.empty()) {
-                std::string safeTarget = StringUtils::toLower(arg.targetName);
-                for (int i = 0; i < layers.size(); ++i) {
-                    if (StringUtils::toLower(layers[i]->name).find(safeTarget) != std::string::npos) {
-                        targetIdx = i; break;
-                    }
-                }
-            }
+        if (arg.newAlphaLock.has_value()) {
+            bool newAlphaLock = arg.newAlphaLock.value();
+            layers[realIndex]->alphaLocked = newAlphaLock;
+        }
 
-            // If no valid layer was found, create a new one
-            if (targetIdx == -1) {
-                m_canvas.addLayer();
-                targetIdx = m_canvas.getActiveLayerIndex();
-            }
+        if (arg.newClipped.has_value()) {
+            bool newClipped = arg.newClipped.value();
+            layers[realIndex]->isClipped = newClipped;
+        }
+    }
+}
 
-            // Prepare the layer for the incoming AI Art
-            layers[targetIdx]->name = "GenAI: " + arg.prompt;
-            m_canvas.setActiveLayer(targetIdx);
+// Reorders a layer within the stack: up/down by one slot, or top/bottom of the stack
+void AssistantController::handleMoveLayerAction(const MoveLayerAction& arg) {
+    auto& layers = m_canvas.getLayers();
 
-            // Launch a detached background thread capturing 'arg' by value
-            std::thread([this, targetIdx, arg]() {
-                try {
-                    // Add a random timestamp so threads never lock the same file
-                    auto now = std::chrono::system_clock::now().time_since_epoch().count();
-                    std::string tempFile = "temp_gen_" + std::to_string(targetIdx) + "_" + std::to_string(now % 100000) + ".jpg";
+    // Resolve and grab the first match
+    auto targets = resolveLayerIndices(arg.targetIndex, arg.targetName);
+    if (targets.empty()) return;
+
+    int targetIdx = targets.front();
+    int destIdx = targetIdx;
+    std::string dir = StringUtils::toLower(arg.direction);
+
+    if (dir == "up" && targetIdx < layers.size() - 1) destIdx = targetIdx + 1;
+    else if (dir == "down" && targetIdx > 0) destIdx = targetIdx - 1;
+    else if (dir == "top") destIdx = layers.size() - 1;
+    else if (dir == "bottom") destIdx = 0;
+
+    if (targetIdx != destIdx) m_canvas.dropLayerToReorder(targetIdx, destIdx);
+}
+
+// Creates a new folder and assigns the AI-provided name; the new folder becomes the active layer
+void AssistantController::handleAddFolderAction(const AddFolderAction& arg) {
+    m_canvas.addFolder();
+    m_canvas.getLayers()[m_canvas.getActiveLayerIndex()]->name = arg.name;
+}
+
+// Sets the active layer by exact index or case-insensitive name match
+void AssistantController::handleSelectLayerAction(const SelectLayerAction& arg) {
+    int pIndex = arg.targetIndex.value_or(-1);
+    std::string pName = arg.targetName.value_or("");
+
+    auto targets = resolveLayerIndices(pIndex, pName);
+
+    // Select the first valid layer found
+    if (!targets.empty()) {
+        m_canvas.setActiveLayer(targets.front());
+    }
+}
+
+// Generates an image via the AI backend and applies it to the target layer.
+// If the target cannot be resolved, a new layer is created automatically.
+// The actual network call runs on a detached background thread; the result is queued
+// in m_readyImages and consumed by processPendingActions on the main thread.
+void AssistantController::handleGenerateImageAction(const GenerateImageAction& arg) {
+    auto& layers = m_canvas.getLayers();
+
+    auto targets = resolveLayerIndices(arg.targetIndex, arg.targetName);
+    int targetIdx = targets.empty() ? -1 : targets.front();
+
+    if (targetIdx == -1) {
+        m_canvas.addLayer();
+        targetIdx = m_canvas.getActiveLayerIndex();
+    }
+
+    layers[targetIdx]->name = "GenAI: " + arg.prompt;
+    m_canvas.setActiveLayer(targetIdx);
+
+    // Extract canvas data on the main thread
+    int canvasW = m_canvas.getSize().x;
+    int canvasH = m_canvas.getSize().y;
+
+    std::thread([this, targetIdx, arg, canvasW, canvasH, aliveToken = m_isAlive]() {
+        try {
+            auto now = std::chrono::system_clock::now().time_since_epoch().count();
+            std::string tempFile = "temp_gen_" + std::to_string(targetIdx) + "_" + std::to_string(now % 100000) + ".jpg";
 
 #ifdef _WIN32
-                // Construct the Dimension-Aware Generation Payload
-                nlohmann::json jPayload;
-                jPayload["prompt"] = arg.prompt;
-                jPayload["width"] = m_canvas.getSize().x;
-                jPayload["height"] = m_canvas.getSize().y;
-                std::string payload = jPayload.dump();
+            // Build the dimension-aware generation payload
+            nlohmann::json jPayload;
+            jPayload["prompt"] = arg.prompt;
+            jPayload["width"] = canvasW;
+            jPayload["height"] = canvasH;
+            std::string payload = jPayload.dump();
 
-                printf("\n[GEN-AI] Starting Cloud GPU Text-to-Image...\n");
-                printf("[GEN-AI] Packaged JSON Payload (%zu bytes). Connecting to Cloudflare...\n", payload.length());
+            printf("\n[GEN-AI] Starting Cloud GPU Text-to-Image...\n");
+            printf("[GEN-AI] Packaged JSON Payload (%zu bytes). Connecting to Cloudflare...\n", payload.length());
 
-                std::string apiDomain = ConfigManager::getApiDomain();
-                HttpResponse response = HttpClient::post(apiDomain, "/api/generate", payload);
+            std::string apiDomain = ConfigManager::getApiDomain();
+            HttpResponse response = HttpClient::post(apiDomain, "/api/generate", payload);
 
-                if (response.success && response.statusCode == 200) {
-                    try {
-                        // Parse JSON and extract Base64
-                        nlohmann::json jRes = nlohmann::json::parse(response.body);
-                        std::string outB64 = jRes["image"];
-
-                        // Decode Base64 to Binary
-                        std::vector<BYTE> binaryData = Base64Codec::decode(outB64);
-                        if (binaryData.empty()) {
-                            printf("[GEN-AI ERROR] Failed to decode Base64 image\n");
-                            std::remove(tempFile.c_str());
-                            return;
-                        }
-
-                        // Save to Temp File
-                        std::ofstream outFile(tempFile, std::ios::binary);
-                        outFile.write(reinterpret_cast<char*>(binaryData.data()), binaryData.size());
-                        outFile.close();
-
-                        sf::Image generatedImg;
-                        if (generatedImg.loadFromFile(tempFile)) {
-                            {
-                                std::lock_guard<std::mutex> lock(m_imageMutex);
-                                m_readyImages.push_back({ targetIdx, std::move(generatedImg) });
-                            }
-                            printf("\n[GEN-AI] Cloud Image Generation successfully applied!\n");
-                        }
-                    }
-                    catch (const std::exception& e) {
-                        printf("\n[GEN-AI ERROR] Failed to parse JSON response: %s\n", e.what());
-                    }
-                }
-                else {
-                    printf("\n[GEN-AI ERROR] %s\n", response.errorMessage.c_str());
-                }
-
-                                    std::remove(tempFile.c_str());
-                #endif
-                                }
-                                catch (const std::exception& e) {
-                                    printf("[GEN-AI ERROR] Generation thread exception: %s\n", e.what());
-                                }
-                            }).detach();
-        }
-        else if constexpr (std::is_same_v<T, EditImageAction>) {
-            auto& layers = m_canvas.getLayers();
-
-            // Resolve the Source Layer (What image is being sent to the AI)
-            int sourceIdx = m_canvas.getActiveLayerIndex();
-            if (arg.sourceIndex >= 0 && arg.sourceIndex < layers.size()) {
-                sourceIdx = arg.sourceIndex;
-            }
-
-            if (sourceIdx == -1 || layers.empty()) return; // Nothing to edit
-
-            m_canvas.setActiveLayer(sourceIdx); // Ensure new layer spawns directly above the source
-            m_canvas.addLayer();                // Instantly creates a blank layer
-
-            int targetIdx = m_canvas.getActiveLayerIndex();
-
-            // Prepare the layer for the incoming AI Art
-            layers[targetIdx]->name = "AI Edit: " + arg.prompt;
-            m_canvas.setActiveLayer(targetIdx);
-
-            // Launch the background network thread
-            std::thread([this, sourceIdx, targetIdx, arg]() {
+            if (response.success && response.statusCode == 200) {
                 try {
-                    // Prove the thread started
-                    printf("\n[GEN-AI] Starting Cloud GPU via Cloudflare Tunnel...\n");
-
-                    auto now = std::chrono::system_clock::now().time_since_epoch().count();
-
-                std::string tempSource = "temp_src_" + std::to_string(sourceIdx) + "_" + std::to_string(now % 100000) + ".png";
-                std::string tempGen = "temp_gen_" + std::to_string(targetIdx) + "_" + std::to_string(now % 100000) + ".jpg";
-
-#ifdef _WIN32
-                // Extract pixels & Read binary
-                auto sourceTexture = m_canvas.getLayers()[sourceIdx]->texture->getTexture();
-                sourceTexture.copyToImage().saveToFile(tempSource);
-
-                std::ifstream file(tempSource, std::ios::binary);
-                std::vector<char> imageBuffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-                file.close();
-
-                if (imageBuffer.empty()) {
-                    printf("[GEN-AI ERROR] Failed to read source image from canvas!\n");
-                    return;
-                }
-
-                // Convert Image to Base64
-                std::string base64Img = Base64Codec::encode(imageBuffer);
-                if (base64Img.empty()) {
-                    printf("[GEN-AI ERROR] Failed to encode image to Base64\n");
-                    std::remove(tempSource.c_str());
-                    std::remove(tempGen.c_str());
-                    return;
-                }
-
-                // Construct the Payload
-                nlohmann::json jPayload;
-                jPayload["image"] = base64Img;
-                jPayload["prompt"] = arg.prompt;
-                jPayload["strength"] = 0.75;
-
-                std::string payload = jPayload.dump();
-                printf("[GEN-AI] Packaged JSON Payload (%zu bytes). Connecting to Cloudflare...\n", payload.length());
-
-                std::string apiDomain = ConfigManager::getApiDomain();
-                HttpResponse response = HttpClient::post(apiDomain, "/api/edit", payload);
-
-                if (response.success && response.statusCode == 200) {
-                    try {
-                        // The API returns {"image": "base64..."}
-                        nlohmann::json jRes = nlohmann::json::parse(response.body);
-                        std::string outB64 = jRes["image"];
-
-                        // Decode the Base64 back into raw binary bytes
-                        std::vector<BYTE> binaryData = Base64Codec::decode(outB64);
-                        if (binaryData.empty()) {
-                            printf("[GEN-AI ERROR] Failed to decode Base64 edited image\n");
-                            std::remove(tempSource.c_str());
-                            std::remove(tempGen.c_str());
-                            return;
-                        }
-
-                        // Save the decoded bytes to the temp file
-                        std::ofstream outFile(tempGen, std::ios::binary);
-                        outFile.write(reinterpret_cast<char*>(binaryData.data()), binaryData.size());
-                        outFile.close();
-
-                        sf::Image generatedImg;
-                        if (generatedImg.loadFromFile(tempGen)) {
-                            {
-                                std::lock_guard<std::mutex> lock(m_imageMutex);
-                                m_readyImages.push_back({ targetIdx, std::move(generatedImg) });
-                            }
-                            printf("\n[GEN-AI] Cloud Image Edit successfully applied!\n");
-                        }
+            // Parse response and decode the returned Base64 image
+                    nlohmann::json jRes = nlohmann::json::parse(response.body);
+                    std::string outB64 = jRes["image"];
+                    // Decode the returned Base64 image directly into RAM
+                    std::vector<BYTE> binaryData = Base64Codec::decode(outB64);
+                    if (binaryData.empty()) {
+                        printf("[GEN-AI ERROR] Failed to decode Base64 image\n");
+                        return;
                     }
-                    catch (const std::exception& e) {
-                        printf("\n[GEN-AI ERROR] Failed to parse API JSON response: %s\n", e.what());
-                    }
-                }
-                else {
-                    printf("\n[GEN-AI ERROR] %s\n", response.errorMessage.c_str());
-                }
 
-                std::remove(tempSource.c_str());
-                std::remove(tempGen.c_str());
-#endif
+					// Read the JPEG data directly from the byte array in memory without writing to disk, and queue it for the main thread
+                    sf::Image generatedImg;
+                    if (generatedImg.loadFromMemory(binaryData.data(), binaryData.size())) {
+                        {
+                            std::lock_guard<std::mutex> lock(m_imageMutex);
+                            m_readyImages.push_back({ targetIdx, std::move(generatedImg) });
+                        }
+                        printf("\n[GEN-AI] Cloud Image successfully applied!\n");
+                    }
                 }
                 catch (const std::exception& e) {
-                    printf("[GEN-AI ERROR] Edit thread exception: %s\n", e.what());
+                    printf("\n[GEN-AI ERROR] Failed to parse JSON response: %s\n", e.what());
                 }
-            }).detach();
+            }
+            else {
+                printf("\n[GEN-AI ERROR] %s\n", response.errorMessage.c_str());
+            }
+
+            std::remove(tempFile.c_str());
+#endif
         }
-    }, op);
+        catch (const std::exception& e) {
+            printf("[GEN-AI ERROR] Generation thread exception: %s\n", e.what());
+        }
+    }).detach();
+}
+
+// Sends a source layer image to the AI for inpainting/editing, then applies the result
+// to a newly created layer positioned directly above the source.
+// The network call and image processing run on a detached background thread.
+void AssistantController::handleEditImageAction(const EditImageAction& arg) {
+    auto& layers = m_canvas.getLayers();
+
+    int sourceIdx = m_canvas.getActiveLayerIndex();
+    if (arg.sourceIndex >= 0 && arg.sourceIndex < layers.size()) {
+        sourceIdx = arg.sourceIndex;
+    }
+
+    if (sourceIdx == -1 || layers.empty()) return;
+
+    m_canvas.setActiveLayer(sourceIdx);
+    m_canvas.addLayer();
+
+    int targetIdx = m_canvas.getActiveLayerIndex();
+    layers[targetIdx]->name = "AI Edit: " + arg.prompt;
+    m_canvas.setActiveLayer(targetIdx);
+
+    std::thread([this, sourceIdx, targetIdx, arg, aliveToken = m_isAlive]() {
+        try {
+            printf("\n[GEN-AI] Starting Cloud GPU via Cloudflare Tunnel...\n");
+
+#ifdef _WIN32
+            // Export the source layer pixels directly into RAM
+            auto sourceImg = m_canvas.getLayers()[sourceIdx]->texture->getTexture().copyToImage();
+
+            auto optionalBuffer = sourceImg.saveToMemory("png");
+
+            if (!optionalBuffer.has_value()) {
+                printf("[GEN-AI ERROR] Failed to encode source image to PNG memory!\n");
+                return;
+            }
+
+            std::vector<uint8_t> imageBuffer = std::move(optionalBuffer.value());
+
+            if (imageBuffer.empty()) {
+                printf("[GEN-AI ERROR] Source image buffer is empty!\n");
+                return;
+            }
+
+            // Encode the in-memory PNG to Base64
+            // Convert sf::Uint8 to char so Base64Codec accepts it
+            std::vector<char> charBuffer(imageBuffer.begin(), imageBuffer.end());
+            std::string base64Img = Base64Codec::encode(charBuffer);
+
+            if (base64Img.empty()) {
+                printf("[GEN-AI ERROR] Failed to encode image to Base64\n");
+                return;
+            }
+
+            // Build the inpainting/edit payload with strength parameter
+            nlohmann::json jPayload;
+            jPayload["image"] = base64Img;
+            jPayload["prompt"] = arg.prompt;
+            jPayload["strength"] = arg.strength.value_or(0.75f);
+
+            std::string payload = jPayload.dump();
+            printf("[GEN-AI] Packaged JSON Payload (%zu bytes). Connecting to Cloudflare...\n", payload.length());
+
+            std::string apiDomain = ConfigManager::getApiDomain();
+            HttpResponse response = HttpClient::post(apiDomain, "/api/edit", payload);
+
+            if (response.success && response.statusCode == 200) {
+                try {
+                    // Parse response and decode the Base64 image back into RAM
+                    nlohmann::json jRes = nlohmann::json::parse(response.body);
+                    std::string outB64 = jRes["image"];
+                    // Decode the returned Base64 image directly into RAM
+                    std::vector<BYTE> binaryData = Base64Codec::decode(outB64);
+                    if (binaryData.empty()) {
+                        printf("[GEN-AI ERROR] Failed to decode Base64 image\n");
+                        return;
+                    }
+
+                    sf::Image generatedImg;
+                    if (generatedImg.loadFromMemory(binaryData.data(), binaryData.size())) {
+                        // If the app was closed while generating, abort safely
+                        if (!*aliveToken) {
+                            printf("\n[GEN-AI] App closed during generation. Thread aborting safely.\n");
+                            return;
+                        }
+
+                        // It is 100% safe to lock and touch 'this' now.
+                        {
+                            std::lock_guard<std::mutex> lock(m_imageMutex);
+                            m_readyImages.push_back({ targetIdx, std::move(generatedImg) });
+                        }
+                        printf("\n[GEN-AI] Cloud Image Edit successfully applied!\n");
+                    }
+                }
+                catch (const std::exception& e) {
+                    printf("\n[GEN-AI ERROR] Failed to parse API JSON response: %s\n", e.what());
+                }
+            }
+            else {
+                printf("\n[GEN-AI ERROR] %s\n", response.errorMessage.c_str());
+            }
+#endif
+        }
+        catch (const std::exception& e) {
+            printf("[GEN-AI ERROR] Edit thread exception: %s\n", e.what());
+        }
+    }).detach();
 }

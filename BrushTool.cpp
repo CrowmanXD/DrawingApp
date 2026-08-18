@@ -36,7 +36,7 @@ BrushTool::BrushTool()
     m_dynamics = std::make_unique<BrushDynamics>();
     m_compositor = std::make_unique<DabCompositor>();
 
-    // Keep default jitter subtle; high jitter makes spacing artifacts visible.
+    // Keep default jitter subtle; high jitter makes spacing artifacts visible
     m_dabScheduler->setJitter(0.05f);
 
     // Configure dynamics with default influences
@@ -145,35 +145,46 @@ void BrushTool::onMouseUp(Canvas& canvas, sf::Vector2f position) {
         StrokePoint p2 = m_pointBuffer[sz - 1];
         StrokePoint p3 = m_pointBuffer[sz - 1]; // Duplicate last point to cap off the curve safely
 
-        // Dynamic Resolution
-        float segDx = p2.position.x - p1.position.x;
-        float segDy = p2.position.y - p1.position.y;
-        float distance = std::sqrt(segDx * segDx + segDy * segDy);
-        int numSteps = std::max(10, static_cast<int>(distance));
-
-        StrokePoint lastSubPoint = p1;
-
-        for (int i = 1; i <= numSteps; ++i) {
-            float t = static_cast<float>(i) / numSteps;
-            sf::Vector2f subPos = getCatmullRomPosition(t, p0.position, p1.position, p2.position, p3.position);
-            StrokePoint subPoint(subPos, p1.pressure + (p2.pressure - p1.pressure) * t);
-
-            // Dynamic Spacing
-            Dab previewDab;
-            m_dynamics->evaluateDab(previewDab, subPoint, m_color);
-            float currentPixelSize = previewDab.size * m_size;
-            m_dabScheduler->setMinDistance(std::max(0.5f, currentPixelSize * 0.05f));
-
-            auto dabs = m_dabScheduler->scheduleDabs(subPoint, lastSubPoint);
-            for (auto& dab : dabs) m_dynamics->evaluateDab(dab, subPoint, m_color);
-            m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode(canvas));
-
-            lastSubPoint = subPoint;
-        }
+        paintInterpolatedSegment(canvas, p0, p1, p2, p3, 0.0f, 0.0f);
     }
 
-    // Clear the buffer to free memory and prep for the next stroke
     m_pointBuffer.clear();
+}
+
+void BrushTool::paintInterpolatedSegment(Canvas& canvas,
+    StrokePoint p0, StrokePoint p1, StrokePoint p2, StrokePoint p3,
+    float p1Speed, float p2Speed) {
+
+    // Dynamic Resolution: calculate how many steps are needed between p1 and p2
+    // based on physical distance. Guarantee at least 10 steps, otherwise 1 per pixel.
+    float segDx = p2.position.x - p1.position.x;
+    float segDy = p2.position.y - p1.position.y;
+    float distance = std::sqrt(segDx * segDx + segDy * segDy);
+    int numSteps = std::max(10, static_cast<int>(distance));
+
+    StrokePoint lastSubPoint = p1;
+
+    for (int i = 1; i <= numSteps; ++i) {
+        float t = static_cast<float>(i) / numSteps;
+
+        // Evaluate Catmull-Rom position on the curve
+        sf::Vector2f subPos = getCatmullRomPosition(t, p0.position, p1.position, p2.position, p3.position);
+        StrokePoint subPoint(subPos, p1.pressure + (p2.pressure - p1.pressure) * t);
+        subPoint.speed = p1Speed + (p2Speed - p1Speed) * t;
+
+        // Dynamic Spacing: ask the dynamics engine how big the brush will be before scheduling dabs,
+        // then shrink the min distance accordingly
+        Dab previewDab;
+        m_dynamics->evaluateDab(previewDab, subPoint, m_color);
+        float currentPixelSize = previewDab.size * m_size;
+        m_dabScheduler->setMinDistance(std::max(0.5f, currentPixelSize * 0.05f)); // Min distance is 5% of the brush diameter
+
+        auto dabs = m_dabScheduler->scheduleDabs(subPoint, lastSubPoint);
+        for (auto& dab : dabs) m_dynamics->evaluateDab(dab, subPoint, m_color);
+        m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode(canvas));
+
+        lastSubPoint = subPoint;
+    }
 }
 
 void BrushTool::createBrushTexture() {
@@ -261,39 +272,7 @@ void BrushTool::processInputPoint(Canvas& canvas, sf::Vector2f position, float p
         StrokePoint p2 = m_pointBuffer[sz - 2];
         StrokePoint p3 = m_pointBuffer[sz - 1]; // The point your mouse just hit
 
-		// Dymanic resolution: Calculate how many steps we need to take between p1 and p2 based on the physical distance between them
-        float segDx = p2.position.x - p1.position.x;
-        float segDy = p2.position.y - p1.position.y;
-        float distance = std::sqrt(segDx * segDx + segDy * segDy);
-
-        // Guarantee at least 10 steps, but otherwise mandate 1 step per physical pixel
-        int numSteps = std::max(10, static_cast<int>(distance));
-        StrokePoint lastSubPoint = p1;
-
-        for (int i = 1; i <= numSteps; ++i) {
-            float t = static_cast<float>(i) / numSteps;
-            sf::Vector2f subPos = getCatmullRomPosition(t, p0.position, p1.position, p2.position, p3.position);
-
-            StrokePoint subPoint(subPos, p1.pressure + (p2.pressure - p1.pressure) * t);
-            subPoint.speed = p1.speed + (p2.speed - p1.speed) * t;
-
-            // Dynamic spacing
-            // Ask the Dynamics engine exactly how big the brush will be before we schedule the dabs
-            Dab previewDab;
-            m_dynamics->evaluateDab(previewDab, subPoint, m_color);
-            float currentPixelSize = previewDab.size * m_size;
-
-            // Update the scheduler so the gap shrinks alongside the brush
-            m_dabScheduler->setMinDistance(std::max(0.5f, currentPixelSize * 0.05f));
-            auto dabs = m_dabScheduler->scheduleDabs(subPoint, lastSubPoint);
-
-            for (auto& dab : dabs) {
-                m_dynamics->evaluateDab(dab, subPoint, m_color);
-            }
-            m_compositor->paintDabs(canvas, dabs, m_brushTexture, m_size, getCurrentBlendMode(canvas));
-
-            lastSubPoint = subPoint;
-        }
+        paintInterpolatedSegment(canvas, p0, p1, p2, p3, p1.speed, p2.speed);
     }
 
     m_lastPoint = stabilizedPoint;

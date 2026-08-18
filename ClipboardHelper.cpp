@@ -8,7 +8,7 @@
 #include <windows.h>
 #endif
 
-// Define our internal cache variables
+// Define internal cache variables
 sf::Image ClipboardHelper::s_internalClipboard;
 unsigned long ClipboardHelper::s_lastSequenceNumber = 0;
 
@@ -22,38 +22,104 @@ sf::Image ClipboardHelper::getImage() {
     sf::Image img;
     if (!OpenClipboard(nullptr)) return img;
 
-    HBITMAP hBitmap = static_cast<HBITMAP>(GetClipboardData(CF_BITMAP));
-    if (hBitmap) {
-        BITMAP bm;
-        GetObject(hBitmap, sizeof(bm), &bm);
-
-        BITMAPINFOHEADER bi = { 0 };
-        bi.biSize = sizeof(BITMAPINFOHEADER);
-        bi.biWidth = bm.bmWidth;
-        bi.biHeight = -bm.bmHeight;
-        bi.biPlanes = 1;
-        bi.biBitCount = 32;
-        bi.biCompression = BI_RGB;
-
-        HDC hdc = GetDC(nullptr);
-        std::vector<std::uint8_t> pixels(bm.bmWidth * bm.bmHeight * 4);
-        GetDIBits(hdc, hBitmap, 0, bm.bmHeight, pixels.data(), reinterpret_cast<BITMAPINFO*>(&bi), DIB_RGB_COLORS);
-        ReleaseDC(nullptr, hdc);
-
-        // If ANY pixel uses the alpha channel, preserve it.
-        bool hasAlpha = false;
-        for (size_t i = 0; i < pixels.size(); i += 4) {
-            std::swap(pixels[i], pixels[i + 2]); // Swap Red and Blue
-            if (pixels[i + 3] > 0) hasAlpha = true;
+    // --- USER COPIED A FILE (CF_HDROP) ---
+    HANDLE hDrop = GetClipboardData(CF_HDROP);
+    if (hDrop) {
+        HDROP dropInfo = static_cast<HDROP>(GlobalLock(hDrop));
+        if (dropInfo) {
+            char filePath[MAX_PATH];
+            // Extract the path of the first copied file
+            if (DragQueryFileA(dropInfo, 0, filePath, MAX_PATH)) {
+                img.loadFromFile(filePath); // Let SFML load the image directly from the disk
+            }
+            GlobalUnlock(hDrop);
         }
-
-        if (!hasAlpha) {
-            for (size_t i = 0; i < pixels.size(); i += 4) pixels[i + 3] = 255;
-        }
-
-        img.resize(sf::Vector2u(bm.bmWidth, bm.bmHeight), pixels.data());
+        CloseClipboard();
+        return img;
     }
+
+    // --- USER COPIED PIXELS (CF_DIB - Snipping Tool, Browser) ---
+    // Retrieve the handle to the clipboard data in Device-Independent Bitmap (DIB) format
+    HANDLE hData = GetClipboardData(CF_DIB);
+    if (hData) {
+        // Lock the global memory handle to safely read the DIB data
+        std::uint8_t* rawData = static_cast<std::uint8_t*>(GlobalLock(hData));
+        if (rawData) {
+            // The DIB memory block starts immediately with the BITMAPINFOHEADER structure.
+            BITMAPINFOHEADER* bi = reinterpret_cast<BITMAPINFOHEADER*>(rawData);
+
+            int width = bi->biWidth;
+            int height = bi->biHeight;
+
+            // Windows bitmaps can be stored top-down (negative height) or bottom-up (positive height).
+            bool isBottomUp = (height > 0);
+            if (height < 0) height = -height; // Normalize height to a positive value
+
+            int bpp = bi->biBitCount; // Bits per pixel
+
+            // Only process standard high-color (24-bit) and true-color (32-bit) formats
+            if (bpp == 24 || bpp == 32) {
+
+                // Calculate where the actual pixel data begins relative to rawData
+                int offset = bi->biSize; // Standard DIB header size
+
+                // If BI_BITFIELDS is used, three 32-bit color masks (12 bytes) follow the header
+                if (bi->biCompression == BI_BITFIELDS) offset += 12;
+                // Otherwise, if the bitmap includes a color palette, skip over it
+                else if (bi->biClrUsed > 0) offset += bi->biClrUsed * sizeof(RGBQUAD);
+
+                std::uint8_t* srcPixels = rawData + offset;
+
+                // Windows requires every horizontal row (stride) to be aligned to a 4-byte boundary
+                int rowStride = ((width * bpp + 31) / 32) * 4;
+
+                // Prepare a destination vector for 4-channel (RGBA) internal SFML pixels
+                std::vector<std::uint8_t> pixels(width * height * 4);
+                bool hasAlpha = false;
+
+                // Iterate through pixels and rearrange them for the internal SFML format (RGBA instead of BGR)
+                for (int y = 0; y < height; ++y) {
+                    // If bottom-up, invert the row index to read from the bottom of the source memory upward
+                    int srcY = isBottomUp ? (height - 1 - y) : y;
+                    std::uint8_t* srcRow = srcPixels + srcY * rowStride;
+                    std::uint8_t* destRow = pixels.data() + y * width * 4;
+
+                    for (int x = 0; x < width; ++x) {
+                        // Windows DIB stores colors as Blue-Green-Red (BGR), while SFML expects Red-Green-Blue (RGB)
+                        destRow[x * 4 + 0] = srcRow[x * (bpp / 8) + 2]; // Red (Reversed from BGR)
+                        destRow[x * 4 + 1] = srcRow[x * (bpp / 8) + 1]; // Green
+                        destRow[x * 4 + 2] = srcRow[x * (bpp / 8) + 0]; // Blue (Reversed from BGR)
+
+                        // Handle the alpha channel depending on the source depth
+                        if (bpp == 32) {
+                            destRow[x * 4 + 3] = srcRow[x * (bpp / 8) + 3]; // Alpha
+                            // Check if the image actually uses semi-transparency
+                            if (destRow[x * 4 + 3] > 0 && destRow[x * 4 + 3] < 255) {
+                                hasAlpha = true;
+                            }
+                        }
+                        else {
+                            // 24-bit images have no alpha channel; set destination alpha to fully opaque
+                            destRow[x * 4 + 3] = 255;
+                        }
+                    }
+                }
+
+                // If it's a 32-bit image but all alpha channels were 0, treat it as opaque
+                if (!hasAlpha && bpp == 32) {
+                    for (size_t i = 0; i < pixels.size(); i += 4) pixels[i + 3] = 255;
+                }
+
+                // Transfer the parsed pixel array into the SFML image object
+                img.resize(sf::Vector2u(width, height), pixels.data());
+            }
+            // Always unlock global memory when finished reading
+            GlobalUnlock(hData);
+        }
+    }
+    // Release ownership of the clipboard so other applications can access it
     CloseClipboard();
+
     return img;
 #else
     return s_internalClipboard;
@@ -61,7 +127,7 @@ sf::Image ClipboardHelper::getImage() {
 }
 
 void ClipboardHelper::setImage(const sf::Image& img) {
-    // Cache it in RAM before the OS gets its hands on it
+    // Cache it in RAM before the OS gets it
     s_internalClipboard = img;
 
 #ifdef _WIN32
@@ -106,7 +172,7 @@ void ClipboardHelper::setImage(const sf::Image& img) {
     }
     CloseClipboard();
 
-    // Grab the Sequence Number AFTER writing so we can verify if the user copies 
+    // Grab the Sequence Number AFTER writing to verify if the user copies 
     // something outside the app later
     s_lastSequenceNumber = GetClipboardSequenceNumber();
 #endif

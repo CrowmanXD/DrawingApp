@@ -98,7 +98,7 @@ void Canvas::addLayer() {
         if (m_layers[m_activeLayerIndex]->type == LayerType::Folder) {
             newLayer->depth++;
         }
-        // Insert right on top of the active layer so it stays in the same folder!
+        // Insert right on top of the active layer so it stays in the same folder
         insertPos = m_activeLayerIndex + 1;
     }
 
@@ -532,10 +532,10 @@ void Canvas::flipCanvasHorizontal() {
             tempTex.clear(sf::Color(0, 0, 0, 0));
 
             sf::Sprite sprite(layer->texture->getTexture());
-            // Set origin to the exact mathematical center of the canvas
+            // Set origin to the mathematical center of the canvas
             sprite.setOrigin(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
             sprite.setPosition(sf::Vector2f(m_size.x / 2.f, m_size.y / 2.f));
-            // A negative X scale perfectly mirrors the texture horizontally
+            // A negative X scale mirrors the texture horizontally
             sprite.setScale(sf::Vector2f(-1.f, 1.f));
 
             tempTex.draw(sprite, sf::RenderStates(sf::BlendNone));
@@ -712,110 +712,171 @@ void Canvas::redo() {
 }
 
 void Canvas::renderComposite(sf::Color clearColor) {
+    // Clear the final output texture with the specified background color (usually white or transparent)
     m_compositeTexture->clear(clearColor);
 
+    // RenderNode acts as a frame in our iterative tree-traversal stack.
+    // It keeps track of the inherited state (opacity, transforms) as we dive deeper into folders.
     struct RenderNode {
-        sf::RenderTarget* target;
-        Layer* layer;
-        float opacityMultiplier;
-        bool isVisible;
-        sf::Vector2f accumulatedOffset;
-        sf::Vector2f accumulatedScale;
+        sf::RenderTarget* target;          // The Framebuffer Object (FBO) we are currently drawing into
+        Layer* layer;                      // The folder layer associated with this node (nullptr for the root canvas)
+        float opacityMultiplier;           // Inherited opacity from parent folders
+        bool isVisible;                    // Inherited visibility from parent folders
+        sf::Vector2f accumulatedOffset;    // Inherited position shifts from parent folders
+        sf::Vector2f accumulatedScale;     // Inherited scaling from parent folders
     };
 
     std::vector<RenderNode> stack;
+    // Push the root canvas node. All top-level layers will draw directly to m_compositeTexture.
     stack.push_back({ m_compositeTexture.get(), nullptr, 1.0f, true, {0.f, 0.f}, {1.f, 1.f} });
 
+    // --- UTILITY LAMBDAS ---
+
+    // Generic helper to draw a texture to a specific target with applied transformations and blending
     auto drawSprite = [&](const sf::Texture& tex, sf::RenderTarget* destTarget, float opacity, sf::BlendMode blendMode, sf::Vector2f offset, sf::Vector2f scale) {
-        if (opacity <= 0.0f) return;
+        if (opacity <= 0.0f) return; // Optimization: Skip rendering entirely transparent pixels
+
         sf::Sprite sprite(tex);
         sprite.setPosition(offset);
         sprite.setScale(scale);
+
+        // Convert normalized opacity (0.0 - 1.0) to 8-bit alpha (0 - 255)
         std::uint8_t alpha = static_cast<std::uint8_t>(opacity * 255.0f);
         sprite.setColor(sf::Color(alpha, alpha, alpha, alpha));
-        destTarget->draw(sprite, sf::RenderStates(blendMode));
-    };
 
+        destTarget->draw(sprite, sf::RenderStates(blendMode));
+        };
+
+    // Tracks the base layer of a clipping mask group. If null, we are not currently processing a clipping group.
     Layer* activeClippingBase = nullptr;
 
     // HELPER 1: Flush the clipping mask FBO to the main target
+    // Called when a clipping group ends. It takes the composite result of the clipping texture
+    // and stamps it onto the current active render target (from the stack)
     auto flushClippingBase = [&]() {
         if (activeClippingBase != nullptr) {
-            m_clippingTexture->display();
+            m_clippingTexture->display(); // Finalize the FBO
+
             float finalOp = activeClippingBase->opacity * stack.back().opacityMultiplier;
             if (activeClippingBase->visible && stack.back().isVisible) {
-                drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp, getSfmlBlendMode(activeClippingBase->blendMode), stack.back().accumulatedOffset, stack.back().accumulatedScale);
+                drawSprite(m_clippingTexture->getTexture(), stack.back().target, finalOp,
+                    getSfmlBlendMode(activeClippingBase->blendMode),
+                    stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
-            activeClippingBase = nullptr;
+            activeClippingBase = nullptr; // Reset the state machine
         }
         };
 
-    // HELPER 2: Render a standard layer using the stack math
+    // HELPER 2: Render a standard standalone layer applying the inherited stack math
     auto drawLayerNode = [&](Layer* layerToDraw, float opacityMult, bool isVis, sf::Vector2f accOffset, sf::Vector2f accScale) {
         float finalOp = layerToDraw->opacity * opacityMult;
+
+        // Calculate the absolute world position and scale by multiplying with parent transforms
         sf::Vector2f finalOffset = accOffset + sf::Vector2f(layerToDraw->offset.x * accScale.x, layerToDraw->offset.y * accScale.y);
         sf::Vector2f finalScale = { layerToDraw->scale.x * accScale.x, layerToDraw->scale.y * accScale.y };
+
         if (layerToDraw->visible && isVis) {
-            drawSprite(layerToDraw->texture->getTexture(), stack.back().target, finalOp, getSfmlBlendMode(layerToDraw->blendMode), finalOffset, finalScale);
+            drawSprite(layerToDraw->texture->getTexture(), stack.back().target, finalOp,
+                getSfmlBlendMode(layerToDraw->blendMode), finalOffset, finalScale);
         }
         };
 
+    // --- MAIN RENDERING LOOP ---
+    // Iterate through layers strictly from bottom to top (Back-to-Front Painter's Algorithm)
     for (int i = 0; i < m_layers.size(); ++i) {
         const auto& layer = m_layers[i];
 
-        if (activeClippingBase != nullptr && !layer->isClipped) flushClippingBase();
-
-        while (stack.size() > layer->depth + 1) {
+        // State Machine: If we were building a clipping mask but the current layer is NOT clipped, 
+        // the clipping group has ended. Must flush the buffer.
+        if (activeClippingBase != nullptr && !layer->isClipped) {
             flushClippingBase();
+        }
+
+        // Handle Folder Hierarchy (Ascending the tree)
+        // If the stack size is larger than the required depth, we have exited one or more folders
+        while (stack.size() > layer->depth + 1) {
+            flushClippingBase(); // Ensure any internal clipping masks are finalized first
+
             auto topNode = stack.back();
             stack.pop_back();
+
+            // If the folder was NOT PassThrough (e.g., Normal blend mode), its children were drawn 
+            // into its private texture. We must now stamp that baked texture onto the parent target
             if (topNode.layer && topNode.layer->blendMode != LayerBlendMode::PassThrough) {
                 topNode.layer->texture->display();
-                drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
+                drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible,
+                    stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
         }
 
-        bool isBaseLayer = (!layer->isClipped && i + 1 < m_layers.size() && m_layers[i + 1]->isClipped && m_layers[i + 1]->depth == layer->depth);
+        // Look-ahead to see if the current layer serves as the base for a clipping mask group
+        bool isBaseLayer = (!layer->isClipped && i + 1 < m_layers.size() &&
+            m_layers[i + 1]->isClipped && m_layers[i + 1]->depth == layer->depth);
 
+        // Handle Folder Hierarchy (Descending into the tree)
         if (layer->type == LayerType::Folder) {
             bool inheritedVis = stack.back().isVisible && layer->visible;
+
             if (layer->blendMode == LayerBlendMode::PassThrough) {
+                // PassThrough Mode: Children draw directly to the parent's target
+                // The folder acts purely as a math container for opacity and transforms
                 float combinedOp = stack.back().opacityMultiplier * layer->opacity;
                 sf::Vector2f combinedScale = { stack.back().accumulatedScale.x * layer->scale.x, stack.back().accumulatedScale.y * layer->scale.y };
                 sf::Vector2f combinedOffset = stack.back().accumulatedOffset + sf::Vector2f(layer->offset.x * stack.back().accumulatedScale.x, layer->offset.y * stack.back().accumulatedScale.y);
+
                 stack.push_back({ stack.back().target, layer.get(), combinedOp, inheritedVis, combinedOffset, combinedScale });
             }
             else {
+                // Isolated Mode (Normal): Children draw into this folder's private FBO
+                // The folder isolates blending from the rest of the canvas until it is popped
                 layer->texture->clear(sf::Color(0, 0, 0, 0));
                 stack.push_back({ layer->texture.get(), layer.get(), 1.0f, inheritedVis, {0.f, 0.f}, {1.f, 1.f} });
             }
         }
+        // Handle Standard Content Layers
         else {
             if (isBaseLayer) {
+                // Initialize the clipping mask FBO and draw the base shape into it
                 m_clippingTexture->clear(sf::Color(0, 0, 0, 0));
                 activeClippingBase = layer.get();
-                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), 1.0f, getSfmlBlendMode(LayerBlendMode::Normal), layer->offset, layer->scale);
+                if (layer->visible) {
+                    drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), 1.0f,
+                        getSfmlBlendMode(LayerBlendMode::Normal), layer->offset, layer->scale);
+                }
             }
             else if (layer->isClipped && activeClippingBase != nullptr) {
-                if (layer->visible) drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity, getSfmlBlendMode(layer->blendMode, true), layer->offset, layer->scale);
+                // Draw clipped contents OVER the base shape using Destination-Alpha blending
+                if (layer->visible) {
+                    drawSprite(layer->texture->getTexture(), m_clippingTexture.get(), layer->opacity,
+                        getSfmlBlendMode(layer->blendMode, true), layer->offset, layer->scale);
+                }
             }
             else {
-                drawLayerNode(layer.get(), stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
+                // Standard unclipped layer rendering
+                drawLayerNode(layer.get(), stack.back().opacityMultiplier, stack.back().isVisible,
+                    stack.back().accumulatedOffset, stack.back().accumulatedScale);
             }
         }
     }
 
+    // --- POST-LOOP CLEANUP ---
+
+    // Flush any pending clipping group that reached the very end of the layer stack
     flushClippingBase();
 
+    // Collapse any remaining open folders in the stack back down to the root canvas
     while (stack.size() > 1) {
         auto topNode = stack.back();
         stack.pop_back();
+
         if (topNode.layer && topNode.layer->blendMode != LayerBlendMode::PassThrough) {
             topNode.layer->texture->display();
-            drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible, stack.back().accumulatedOffset, stack.back().accumulatedScale);
+            drawLayerNode(topNode.layer, stack.back().opacityMultiplier, stack.back().isVisible,
+                stack.back().accumulatedOffset, stack.back().accumulatedScale);
         }
     }
 
+    // Finalize the master composite texture so it is ready to be drawn to the OS Window
     m_compositeTexture->display();
 }
 

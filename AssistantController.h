@@ -74,6 +74,7 @@ struct EditImageAction {
     int sourceIndex = -1;
     int targetIndex = -1;
     std::string targetName = "";
+    std::optional<float> strength;
 };
 
 // Variant holding only approved operations
@@ -118,6 +119,9 @@ private:
     Canvas& m_canvas;
     std::unique_ptr<IAssistant> m_backend;
 
+    // Tracks if the controller still exists across detached threads
+    std::shared_ptr<std::atomic<bool>> m_isAlive;
+
     // Async machinery
     std::thread m_workerThread;
     std::atomic<AssistantState> m_state{ AssistantState::Idle };
@@ -131,4 +135,20 @@ private:
 
     AssistantContext buildContextSnapshot() const;
     void executeAction(const AIOperation& op);
+    std::vector<int> resolveLayerIndices(int providedIndex, const std::string& providedName);
+
+    // Action handlers — each owns the full lifecycle for one AI operation type
+    void handleAddLayerAction(const AddLayerAction& arg);
+    // Removes a layer by its exact index
+    void handleDeleteLayerAction(const DeleteLayerAction& arg);
+    // Resolves target layer(s) by exact index or fuzzy name match,
+    // then applies any provided property changes with undo tracking
+    void handleModifyLayerAction(const ModifyLayerAction& arg);
+    void handleMoveLayerAction(const MoveLayerAction& arg);
+    // Creates a new folder and assigns the AI-provided name
+    void handleAddFolderAction(const AddFolderAction& arg);
+    // Switches active layer by exact index or case-insensitive name match
+    void handleSelectLayerAction(const SelectLayerAction& arg);
+    void handleGenerateImageAction(const GenerateImageAction& arg);
+    void handleEditImageAction(const EditImageAction& arg);
 };

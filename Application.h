@@ -136,7 +136,7 @@ private:
     TransformTool m_transformTool;
 	ColorPickerTool m_colorPickerTool;
     Tool* m_activeTool = nullptr;
-    int m_currentToolMode = 0; // 0 = Brush, 1 = Select
+    int m_currentToolMode = 0;
 
     std::unique_ptr<AssistantController> m_assistant;
     bool m_assistantEnabled = false;

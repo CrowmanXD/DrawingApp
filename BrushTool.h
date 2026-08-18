@@ -52,6 +52,12 @@ private:
     // Process raw input and emit dabs
     void processInputPoint(Canvas& canvas, sf::Vector2f position, float pressure = 1.0f);
 
+    // Interpolate between p1 and p2 using Catmull-Rom curve evaluation,
+    // dynamically spacing and sizing each dab via the brush engine.
+    // p1Speed/p2Speed are used for speed interpolation (pass 0 when unavailable).
+    void paintInterpolatedSegment(Canvas& canvas, StrokePoint p0, StrokePoint p1, StrokePoint p2, StrokePoint p3,
+        float p1Speed, float p2Speed);
+
     sf::BlendMode getCurrentBlendMode(Canvas& canvas) const;
 
     // Brush engine components

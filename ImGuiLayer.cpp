@@ -104,7 +104,7 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
         float buttonWidth = 220.f;
         // --- TITLE ---
         ImGui::Spacing(); ImGui::Spacing();
-        const char* title = "Welcome to Licenta Desen C++";
+        const char* title = "Welcome to DrawingApp";
         float textWidth = ImGui::CalcTextSize(title).x;
 
         ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "%s", title); // Blue tint
@@ -232,6 +232,8 @@ void ImGuiLayer::update(sf::RenderWindow& window, sf::Time deltaTime, Applicatio
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Filter")) { ImGui::EndMenu(); }
+
+            ImGui::Text("FPS: %.1f", ImGui::GetIO().Framerate);
 
             ImGui::EndMainMenuBar();
         }

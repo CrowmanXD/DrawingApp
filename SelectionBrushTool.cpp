@@ -10,8 +10,8 @@ void SelectionBrushTool::onMouseDown(Canvas& canvas, sf::Vector2f pos) {
     m_beforeImage = std::make_unique<sf::Image>(canvas.getSelectionTextureConst().copyToImage());
     m_beforeHasSelection = canvas.hasSelection();
 
-    // Notice we do NOT clear the texture here
-    // This allows you to click multiple times to paint a massive, complex selection
+    // Do NOT clear the texture here
+    // This allows to click multiple times to paint a massive, complex selection
     canvas.setSelectionActive(true);
     canvas.setSelectionLive(true);
 

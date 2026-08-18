@@ -26,9 +26,11 @@ std::string FileDialogs::saveFile(const char* filter) {
     CHAR szFile[260] = { 0 };
     ZeroMemory(&ofn, sizeof(OPENFILENAME));
     ofn.lStructSize = sizeof(OPENFILENAME);
+    // Window is independent
     ofn.hwndOwner = nullptr;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
+    // Filters what files are allowed
     ofn.lpstrFilter = filter;
     ofn.nFilterIndex = 1;
     // OFN_OVERWRITEPROMPT warns the user if they are about to overwrite an existing image

@@ -1,6 +1,5 @@
 #include "Application.h"
 #include "ClipboardHelper.h"
-#include "MockAssistant.h"
 #include "LLMAssistant.h"
 #include "FileDialogs.h"
 #include <fstream>
@@ -23,7 +22,7 @@ LRESULT CALLBACK TabletProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             if (pointerType == PT_PEN) {
                 POINTER_PEN_INFO penInfo;
                 if (GetPointerPenInfo(pointerId, &penInfo)) {
-                    // Hardware pressure is typically 0 to 1024. Normalize it to 0.0 -> 1.0
+                    // Normalize Hardware pressure from 0 -> 1024 to 0.0 -> 1.0
                     float pressure = static_cast<float>(penInfo.pressure) / 1024.0f;
                     if (g_appInstance) g_appInstance->setPenPressure(pressure);
                 }
@@ -40,7 +39,7 @@ LRESULT CALLBACK TabletProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 #endif
 
 Application::Application()
-    : m_window(sf::VideoMode::getDesktopMode(), "Licenta Desen C++", sf::Style::Default), 
+    : m_window(sf::VideoMode::getDesktopMode(), "DrawingApp", sf::Style::Default), 
     m_colorPickerTool(*this)
 {
     m_window.setFramerateLimit(60);
@@ -75,7 +74,7 @@ Application::Application()
                     float top = texture2D(selectionMask, uv + vec2(0.0, dy)).a;
                     float bottom = texture2D(selectionMask, uv + vec2(0.0, -dy)).a;
                     
-                    // Edge Detection: If it's solid, but any neighbor is transparent, we are on the border!
+                    // Edge Detection: If it's solid, but any neighbor is transparent, the pixel is on the border
                     if (center > 0.5 && (left < 0.5 || right < 0.5 || top < 0.5 || bottom < 0.5)) {
                         float dash = sin((gl_FragCoord.x + gl_FragCoord.y) * 0.5 - time * 15.0);
                         if (dash > 0.0) gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);
@@ -171,23 +170,22 @@ void Application::run() {
     }
 }
 
+constexpr float LEFT_UI_WIDTH = 70.f;
+constexpr float RIGHT_UI_WIDTH = 300.f;
+constexpr float TOP_MENU_HEIGHT = 24.f;
 sf::Vector2f Application::getCanvasOffset() const {
     if (!m_canvas) return { 0.f, 0.f };
 
     // Define the exact sizes of the UI panels
-    float leftUIWidth = 70.f;
-    float rightUIWidth = 300.f;
-    float topMenuHeight = 24.f; // The height of the Main Menu Bar
-
-    float workspaceWidth = static_cast<float>(m_window.getSize().x) - leftUIWidth - rightUIWidth;
-    float workspaceHeight = static_cast<float>(m_window.getSize().y) - topMenuHeight;
+    float workspaceWidth = static_cast<float>(m_window.getSize().x) - LEFT_UI_WIDTH - RIGHT_UI_WIDTH;
+    float workspaceHeight = static_cast<float>(m_window.getSize().y) - TOP_MENU_HEIGHT;
 
     float scaledWidth = static_cast<float>(m_canvas->getSize().x) * m_zoom;
     float scaledHeight = static_cast<float>(m_canvas->getSize().y) * m_zoom;
 
     // Center the canvas dynamically in the gap
-    float offsetX = leftUIWidth + (workspaceWidth - scaledWidth) / 2.f + m_pan.x;
-    float offsetY = topMenuHeight + (workspaceHeight - scaledHeight) / 2.f + m_pan.y;
+    float offsetX = LEFT_UI_WIDTH + (workspaceWidth - scaledWidth) / 2.f + m_pan.x;
+    float offsetY = TOP_MENU_HEIGHT + (workspaceHeight - scaledHeight) / 2.f + m_pan.y;
 
     return { offsetX, offsetY };
 }
@@ -195,7 +193,7 @@ sf::Vector2f Application::getCanvasOffset() const {
 void Application::startDrawing(unsigned int width, unsigned int height) {
     m_canvas = std::make_unique<Canvas>(sf::Vector2u(width, height));
 
-    // Clear the new canvas to transparent black to avoid dark halos
+    // Clear the new canvas to transparent black
     m_canvas->clear(sf::Color(0, 0, 0, 0));
 
     m_assistant = std::make_unique<AssistantController>(*m_canvas);
@@ -495,7 +493,7 @@ void Application::render() {
             cursor.setPosition(sf::Vector2f(static_cast<float>(mousePos.x), static_cast<float>(mousePos.y)));
             cursor.setFillColor(sf::Color::Transparent);
 
-            // Dynamically increase polygon count so massive brushes stay perfectly round
+            // Dynamically increase polygon count so massive brushes stay round
             cursor.setPointCount(static_cast<std::size_t>(std::max(30.0f, radius * 2.0f)));
 
             // Draw Outer Black Outline
